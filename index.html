@@ -11,10 +11,14 @@
             font-family: 'Inter', sans-serif;
             background-color: #030712;
             color: #f3f4f6;
-            overflow-x: hidden;
+            overflow: hidden; /* 画面全体のスクロールを禁止 */
+            overscroll-behavior-y: none; /* スマホ特有の引っ張りバウンスを防止 */
             touch-action: manipulation;
             user-select: none;
             -webkit-user-select: none;
+            position: fixed;
+            width: 100%;
+            height: 100%;
         }
         .cyber-font {
             font-family: 'Orbitron', sans-serif;
@@ -62,10 +66,10 @@
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4">
+<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4 overflow-y-auto">
 
     <!-- 設定モーダル -->
-    <div id="settings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 hidden p-4">
+    <div id="settings-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden p-4">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-4 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b border-slate-800 pb-2">
                 <h3 class="cyber-font text-sm font-bold text-cyan-400">GAME SETTINGS</h3>
@@ -176,14 +180,14 @@
             <div class="relative bg-slate-950 border-2 border-cyan-500/40 rounded-xl neon-glow-cyan overflow-hidden">
                 <canvas id="tetris-canvas" width="180" height="360" class="block w-[160px] sm:w-[180px] h-[320px] sm:h-[360px]"></canvas>
                 
-                <div id="speedup-cutin" class="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center pointer-events-none hidden z-20">
+                <div id="speedup-cutin" class="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none hidden z-20">
                     <div class="text-center">
                         <div class="cyber-font text-xl sm:text-2xl font-black text-yellow-400 neon-text-cyan cut-in-effect">SPEED UP!</div>
                         <div id="speedup-sub" class="text-xs text-cyan-300 cyber-font font-bold mt-1">VELOCITY x1.2</div>
                     </div>
                 </div>
 
-                <div id="game-over-overlay" class="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 hidden z-30">
+                <div id="game-over-overlay" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-4 hidden z-30">
                     <h2 class="cyber-font text-xl font-bold text-pink-500 mb-2 neon-text-cyan">GAME OVER</h2>
                     <div class="text-xs text-slate-300 space-y-1 mb-4 text-center">
                         <div>設置ミノ: <span id="res-placed" class="text-cyan-400 font-bold">0</span> × 50 = <span id="res-p-score" class="text-cyan-300 font-bold">0</span> pt</div>
@@ -230,80 +234,41 @@
     </div>
 
     <script>
-        // BGMは bgm.mp3 のみを再生し、内蔵シンセによる曲生成・切り替え処理は行わない。
-        // 効果音のみ、MP3再生失敗時にWeb Audioで代替する。
-        // GitHub Pagesではファイル名の大文字・小文字が区別されるため、bgm.mp3 の綴りを一致させる。
+        // スマホでのピンチズームやダブルタップ拡大を完全に防止
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', (e) => {
+            const now = Date.now();
+            if (now - lastTouchEnd <= 300) {
+                e.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, { passive: false });
+
+        document.addEventListener('gesturestart', (e) => { e.preventDefault(); });
+        document.addEventListener('gesturechange', (e) => { e.preventDefault(); });
+
+        // 音声アセットの定義 (bgm.mp3を確実にループ再生)
         const sounds = {
-            bgm: new Audio(new URL('./bgm.mp3', document.baseURI).href),
-            hold: new Audio(new URL('./hold.mp3', document.baseURI).href),
-            rotate: new Audio(new URL('./rotate.mp3', document.baseURI).href),
-            move: new Audio(new URL('./move.mp3', document.baseURI).href),
-            line: new Audio(new URL('./Line.mp3', document.baseURI).href),
-            button: new Audio(new URL('./button.mp3', document.baseURI).href),
-            obstacle: new Audio(new URL('./obstacle.mp3', document.baseURI).href),
-            speedup: new Audio(new URL('./speedup.mp3', document.baseURI).href),
-            hard: new Audio(new URL('./hard.mp3', document.baseURI).href)
+            bgm: new Audio(new URL('bgm.mp3', document.baseURI).href),
+            hold: new Audio(new URL('hold.mp3', document.baseURI).href),
+            rotate: new Audio(new URL('rotate.mp3', document.baseURI).href),
+            move: new Audio(new URL('move.mp3', document.baseURI).href),
+            line: new Audio(new URL('Line.mp3', document.baseURI).href),
+            button: new Audio(new URL('button.mp3', document.baseURI).href),
+            obstacle: new Audio(new URL('obstacle.mp3', document.baseURI).href),
+            speedup: new Audio(new URL('speedup.mp3', document.baseURI).href),
+            hard: new Audio(new URL('hard.mp3', document.baseURI).href)
         };
 
         sounds.bgm.loop = true;
         sounds.bgm.volume = 0.4;
         sounds.bgm.preload = 'auto';
 
-        let audioContext = null;
-
-        function getAudioContext() {
-            if (!audioContext) {
-                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-                if (!AudioContextClass) return null;
-                audioContext = new AudioContextClass();
-            }
-            if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
-            return audioContext;
-        }
-
-        function playSynthTone(frequency, startTime, duration, waveform = 'triangle', volume = 0.04) {
-            const ac = getAudioContext();
-            if (!ac || !Number.isFinite(frequency) || frequency <= 0) return;
-            const osc = ac.createOscillator();
-            const gain = ac.createGain();
-            osc.type = waveform;
-            osc.frequency.setValueAtTime(frequency, startTime);
-            gain.gain.setValueAtTime(0.0001, startTime);
-            gain.gain.linearRampToValueAtTime(volume, startTime + 0.012);
-            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.max(0.04, duration));
-            osc.connect(gain);
-            gain.connect(ac.destination);
-            osc.start(startTime);
-            osc.stop(startTime + duration + 0.03);
-        }
-
-        function playSynthSE(name) {
-            const ac = getAudioContext();
-            if (!ac) return;
-            const now = ac.currentTime + 0.015;
-            const tones = {
-                button: [660, 0.07], move: [220, 0.045], rotate: [520, 0.09],
-                hold: [330, 0.12], line: [880, 0.22], obstacle: [130, 0.18],
-                speedup: [740, 0.2], hard: [165, 0.15]
-            };
-            const [freq, duration] = tones[name] || [440, 0.08];
-            const waveform = (name === 'hard' || name === 'obstacle') ? 'sawtooth' : 'square';
-            playSynthTone(freq, now, duration, waveform, name === 'move' ? 0.012 : 0.035);
-            if (name === 'line' || name === 'speedup') {
-                playSynthTone(freq * 1.25, now + 0.09, duration, 'triangle', 0.025);
-            }
-        }
-
         function startBgm() {
-            sounds.bgm.pause();
             sounds.bgm.currentTime = 0;
-            const result = sounds.bgm.play();
-            if (result && typeof result.catch === 'function') {
-                result.catch(error => {
-                    // 自動再生制限やファイル未配置などの原因確認用。BGMは指定のMP3のみを再生する。
-                    console.warn('bgm.mp3 を再生できません。ファイルの配置・名前とブラウザの音声設定を確認してください。', error);
-                });
-            }
+            sounds.bgm.play().catch(e => {
+                console.warn("BGM autoplay was prevented:", e);
+            });
         }
 
         function stopBgm() {
@@ -313,17 +278,11 @@
 
         function playSE(name) {
             const sound = sounds[name];
-            if (!sound) {
-                playSynthSE(name);
-                return;
-            }
+            if (!sound) return;
             try {
                 sound.currentTime = 0;
-                const result = sound.play();
-                if (result && typeof result.catch === 'function') result.catch(() => playSynthSE(name));
-            } catch (e) {
-                playSynthSE(name);
-            }
+                sound.play().catch(e => {});
+            } catch (e) {}
         }
 
         const DEFAULT_CONFIG = {
@@ -763,7 +722,7 @@
             isStagingGarbage = false;
             clearLockDelay();
 
-            // BGMは bgm.mp3 を再生する。開始操作のクリック中に呼び出して自動再生制限を回避する。
+            // ゲームスタート時にbgm.mp3を確実に再生
             startBgm();
 
             refillBag();
@@ -1125,7 +1084,7 @@
             ctx.fillStyle = '#030712';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // セルごとに200回strokeRectせず、縦横のグリッド線を1パスで描く。
+            // グリッド線の描画最適化
             ctx.strokeStyle = '#0f172a';
             ctx.lineWidth = 0.5;
             ctx.beginPath();
