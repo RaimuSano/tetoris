@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Neon Custom Tetris</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -11,14 +11,11 @@
             font-family: 'Inter', sans-serif;
             background-color: #030712;
             color: #f3f4f6;
-            overflow: hidden; /* 画面全体のスクロールを禁止 */
-            overscroll-behavior-y: none; /* スマホ特有の引っ張りバウンスを防止 */
+            overflow: hidden;
+            overscroll-behavior: none;
             touch-action: manipulation;
             user-select: none;
             -webkit-user-select: none;
-            position: fixed;
-            width: 100%;
-            height: 100%;
         }
         .cyber-font {
             font-family: 'Orbitron', sans-serif;
@@ -31,20 +28,22 @@
         }
         .mino-grid {
             touch-action: none;
+            -webkit-tap-highlight-color: transparent;
         }
-        /* ミノ編集は頻繁に更新されるため、セルの全プロパティ遷移を避ける */
-        .mino-grid > div {
-            transition: none !important;
+        button, canvas {
+            -webkit-tap-highlight-color: transparent;
         }
-        /* モバイルGPUへの負荷を抑える */
+        #game-screen, #game-controls, #tetris-canvas {
+            touch-action: none;
+            overscroll-behavior: none;
+        }
         @media (max-width: 640px) {
-            #settings-modal, #game-over-overlay, #speedup-cutin {
-                -webkit-backdrop-filter: none !important;
-                backdrop-filter: none !important;
-            }
-            .neon-glow-cyan {
-                box-shadow: 0 0 8px rgba(6, 182, 212, 0.25);
-            }
+            .neon-glow-cyan { box-shadow: 0 0 6px rgba(6, 182, 212, 0.25); }
+            #speedup-cutin, #game-over-overlay { backdrop-filter: none; -webkit-backdrop-filter: none; }
+            body { min-height: 100dvh; height: 100dvh; padding: 6px; }
+            #game-screen { gap: 6px; }
+            #game-controls button { padding-top: 9px; padding-bottom: 9px; }
+            #tetris-canvas { width: min(48vw, 180px); height: auto; aspect-ratio: 1 / 2; }
         }
         @keyframes cutInAnim {
             0% { transform: scale(0.2) rotate(-10deg); opacity: 0; }
@@ -66,10 +65,10 @@
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4 overflow-y-auto">
+<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4">
 
     <!-- 設定モーダル -->
-    <div id="settings-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden p-4">
+    <div id="settings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 hidden p-4">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-4 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center border-b border-slate-800 pb-2">
                 <h3 class="cyber-font text-sm font-bold text-cyan-400">GAME SETTINGS</h3>
@@ -180,14 +179,14 @@
             <div class="relative bg-slate-950 border-2 border-cyan-500/40 rounded-xl neon-glow-cyan overflow-hidden">
                 <canvas id="tetris-canvas" width="180" height="360" class="block w-[160px] sm:w-[180px] h-[320px] sm:h-[360px]"></canvas>
                 
-                <div id="speedup-cutin" class="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none hidden z-20">
+                <div id="speedup-cutin" class="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center pointer-events-none hidden z-20">
                     <div class="text-center">
                         <div class="cyber-font text-xl sm:text-2xl font-black text-yellow-400 neon-text-cyan cut-in-effect">SPEED UP!</div>
                         <div id="speedup-sub" class="text-xs text-cyan-300 cyber-font font-bold mt-1">VELOCITY x1.2</div>
                     </div>
                 </div>
 
-                <div id="game-over-overlay" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-4 hidden z-30">
+                <div id="game-over-overlay" class="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 hidden z-30">
                     <h2 class="cyber-font text-xl font-bold text-pink-500 mb-2 neon-text-cyan">GAME OVER</h2>
                     <div class="text-xs text-slate-300 space-y-1 mb-4 text-center">
                         <div>設置ミノ: <span id="res-placed" class="text-cyan-400 font-bold">0</span> × 50 = <span id="res-p-score" class="text-cyan-300 font-bold">0</span> pt</div>
@@ -234,57 +233,6 @@
     </div>
 
     <script>
-        // スマホでのピンチズームやダブルタップ拡大を完全に防止
-        let lastTouchEnd = 0;
-        document.addEventListener('touchend', (e) => {
-            const now = Date.now();
-            if (now - lastTouchEnd <= 300) {
-                e.preventDefault();
-            }
-            lastTouchEnd = now;
-        }, { passive: false });
-
-        document.addEventListener('gesturestart', (e) => { e.preventDefault(); });
-        document.addEventListener('gesturechange', (e) => { e.preventDefault(); });
-
-        // 音声アセットの定義 (bgm.mp3を確実にループ再生)
-        const sounds = {
-            bgm: new Audio(new URL('bgm.mp3', document.baseURI).href),
-            hold: new Audio(new URL('hold.mp3', document.baseURI).href),
-            rotate: new Audio(new URL('rotate.mp3', document.baseURI).href),
-            move: new Audio(new URL('move.mp3', document.baseURI).href),
-            line: new Audio(new URL('Line.mp3', document.baseURI).href),
-            button: new Audio(new URL('button.mp3', document.baseURI).href),
-            obstacle: new Audio(new URL('obstacle.mp3', document.baseURI).href),
-            speedup: new Audio(new URL('speedup.mp3', document.baseURI).href),
-            hard: new Audio(new URL('hard.mp3', document.baseURI).href)
-        };
-
-        sounds.bgm.loop = true;
-        sounds.bgm.volume = 0.4;
-        sounds.bgm.preload = 'auto';
-
-        function startBgm() {
-            sounds.bgm.currentTime = 0;
-            sounds.bgm.play().catch(e => {
-                console.warn("BGM autoplay was prevented:", e);
-            });
-        }
-
-        function stopBgm() {
-            sounds.bgm.pause();
-            sounds.bgm.currentTime = 0;
-        }
-
-        function playSE(name) {
-            const sound = sounds[name];
-            if (!sound) return;
-            try {
-                sound.currentTime = 0;
-                sound.play().catch(e => {});
-            } catch (e) {}
-        }
-
         const DEFAULT_CONFIG = {
             targetCounts: [3, 3, 4, 4, 5, 6, 7],
             allowOverlap: false,
@@ -327,6 +275,7 @@
         let isDrawing = false;
         let drawTargetState = 1;
         let allValid = false;
+        let editorCells = [];
 
         const editorContainer = document.getElementById('minos-editor-container');
         const startGameBtn = document.getElementById('start-game-btn');
@@ -335,38 +284,31 @@
         // 設定モーダル関連
         const settingsModal = document.getElementById('settings-modal');
         document.getElementById('open-settings-btn').onclick = () => {
-            playSE('button');
             syncSettingsToUI();
             settingsModal.classList.remove('hidden');
         };
-        document.getElementById('close-settings-btn').onclick = () => {
-            playSE('button');
-            settingsModal.classList.add('hidden');
-        };
+        document.getElementById('close-settings-btn').onclick = () => { settingsModal.classList.add('hidden'); };
         
         document.getElementById('save-settings-btn').onclick = () => {
-            playSE('button');
             syncUIToSettings();
             saveConfigToStorage();
             settingsModal.classList.add('hidden');
-            updateEditorUI();
+            initEditor();
         };
 
         document.getElementById('reset-settings-btn').onclick = () => {
-            playSE('button');
             gameConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
             saveConfigToStorage();
             syncSettingsToUI();
-            updateEditorUI();
+            initEditor();
         };
 
         // ミノリセットボタン
         document.getElementById('reset-minos-btn').onclick = () => {
-            playSE('button');
             if (confirm('描いたミノをすべてリセットしてまっさらにしますか？')) {
                 customMinos = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4).fill(0)));
                 saveMinosToStorage();
-                updateEditorUI();
+                initEditor();
             }
         };
 
@@ -406,55 +348,10 @@
             }
         }
 
-        // --- パフォーマンス改善：エディターのDOMを最初だけ生成し、差分更新する仕組み ---
-        let editorCells = [];
-        let countBadges = [];
-        let errorMsgDivs = [];
-        let editorUpdateScheduled = false;
-        let minoChangesPending = false;
-
-        function scheduleEditorUIUpdate() {
-            if (editorUpdateScheduled) return;
-            editorUpdateScheduled = true;
-            requestAnimationFrame(() => {
-                editorUpdateScheduled = false;
-                updateEditorUI();
-            });
-        }
-
-        function finishMinoDrawing() {
-            isDrawing = false;
-            if (minoChangesPending) {
-                minoChangesPending = false;
-                saveMinosToStorage();
-                scheduleEditorUIUpdate();
-            }
-        }
-
-        function renderEditorCell(i, r, c) {
-            const cell = editorCells[i] && editorCells[i][r] && editorCells[i][r][c];
-            if (!cell) return;
-            if (customMinos[i][r][c]) {
-                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border shadow-md scale-95';
-                cell.style.backgroundColor = MINO_COLORS[i];
-                cell.style.borderColor = '#ffffff';
-                cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
-            } else {
-                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border bg-slate-900 hover:bg-slate-800 border-slate-800/60';
-                cell.style.backgroundColor = '#0f172a';
-                cell.style.borderColor = '';
-                cell.style.boxShadow = '';
-            }
-        }
-
-        function initEditorDOM() {
+        function initEditor() {
             editorContainer.innerHTML = '';
-            editorCells = [];
-            countBadges = [];
-            errorMsgDivs = [];
-
+            editorCells = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4)));
             for (let i = 0; i < 7; i++) {
-                editorCells[i] = [];
                 const card = document.createElement('div');
                 card.className = 'bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 flex flex-col items-center shadow-md';
                 
@@ -468,34 +365,48 @@
                     <span id="count-badge-${i}" class="text-[9px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">目標: ${gameConfig.targetCounts[i]}マス</span>
                 `;
                 card.appendChild(header);
-                countBadges[i] = header.querySelector(`#count-badge-${i}`);
 
                 const grid = document.createElement('div');
                 grid.className = 'mino-grid grid grid-cols-4 gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800';
                 for (let r = 0; r < 4; r++) {
-                    editorCells[i][r] = [];
                     for (let c = 0; c < 4; c++) {
                         const cell = document.createElement('div');
-                        cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border';
+                        const isActive = customMinos[i][r][c];
+                        cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border ' + 
+                            (isActive ? 'shadow-md scale-95' : 'bg-slate-900 hover:bg-slate-800 border-slate-800/60');
                         
+                        if (isActive) {
+                            cell.style.backgroundColor = MINO_COLORS[i];
+                            cell.style.borderColor = '#ffffff';
+                            cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
+                        } else {
+                            cell.style.backgroundColor = '#0f172a';
+                        }
+                        
+                        editorCells[i][r][c] = cell;
+                        const paintCell = (active) => {
+                            cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border ' +
+                                (active ? 'shadow-md scale-95' : 'bg-slate-900 border-slate-800/60');
+                            cell.style.backgroundColor = active ? MINO_COLORS[i] : '#0f172a';
+                            cell.style.borderColor = active ? '#ffffff' : '';
+                            cell.style.boxShadow = active ? `0 0 5px ${MINO_COLORS[i]}` : '';
+                        };
                         cell.onpointerdown = (e) => {
                             e.preventDefault();
                             isDrawing = true;
                             drawTargetState = customMinos[i][r][c] ? 0 : 1;
                             customMinos[i][r][c] = drawTargetState;
-                            minoChangesPending = true;
-                            renderEditorCell(i, r, c);
+                            paintCell(!!drawTargetState);
+                            validateAllMinos();
                         };
                         cell.onpointerenter = () => {
                             if (isDrawing && customMinos[i][r][c] !== drawTargetState) {
                                 customMinos[i][r][c] = drawTargetState;
-                                minoChangesPending = true;
-                                renderEditorCell(i, r, c);
+                                paintCell(!!drawTargetState);
+                                validateAllMinos();
                             }
                         };
-
                         grid.appendChild(cell);
-                        editorCells[i][r][c] = cell;
                     }
                 }
                 card.appendChild(grid);
@@ -504,93 +415,37 @@
                 errDiv.id = `error-msg-${i}`;
                 errDiv.className = 'text-[9px] text-pink-400 mt-1 h-3.5 text-center truncate w-full';
                 card.appendChild(errDiv);
-                errorMsgDivs[i] = errDiv;
 
                 editorContainer.appendChild(card);
             }
-            updateEditorUI();
+            validateAllMinos();
         }
 
-        function updateEditorUI() {
-            let signatures = new Set();
-            allValid = true;
-
-            for (let i = 0; i < 7; i++) {
-                let count = 0;
-                for (let r = 0; r < 4; r++) {
-                    for (let c = 0; c < 4; c++) {
-                        const isActive = customMinos[i][r][c];
-                        if (isActive) count++;
-
-                        const cell = editorCells[i][r][c];
-                        if (cell) {
-                            if (isActive) {
-                                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border shadow-md scale-95';
-                                cell.style.backgroundColor = MINO_COLORS[i];
-                                cell.style.borderColor = '#ffffff';
-                                cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
-                            } else {
-                                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer flex items-center justify-center border bg-slate-900 hover:bg-slate-800 border-slate-800/60';
-                                cell.style.backgroundColor = '#0f172a';
-                                cell.style.borderColor = '';
-                                cell.style.boxShadow = '';
-                            }
-                        }
-                    }
-                }
-
-                if (countBadges[i]) {
-                    countBadges[i].innerText = `目標: ${gameConfig.targetCounts[i]}マス`;
-                }
-
-                let msg = "";
-                let isValid = true;
-                const targetCount = gameConfig.targetCounts[i];
-
-                if (count !== targetCount) {
-                    msg = `要${targetCount}マス (現在${count})`;
-                    isValid = false;
-                } else if (!checkConnectivity(customMinos[i])) {
-                    msg = `ブロックが分断されています`;
-                    isValid = false;
-                } else if (!gameConfig.allowOverlap) {
-                    let sig = getCanonicalSignature(customMinos[i]);
-                    if (signatures.has(sig)) {
-                        msg = `他のミノと形状が重複`;
-                        isValid = false;
-                    } else {
-                        signatures.add(sig);
-                    }
-                }
-
-                if (errorMsgDivs[i]) {
-                    errorMsgDivs[i].innerText = msg;
-                }
-                const badge = countBadges[i];
-                if (badge) {
-                    if (isValid) {
-                        badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold";
-                    } else {
-                        badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-pink-950 border border-pink-500/50 text-pink-400 font-bold";
-                    }
-                }
-
-                if (!isValid) allValid = false;
+        window.addEventListener('pointerup', () => {
+            if (isDrawing) {
+                isDrawing = false;
+                saveMinosToStorage();
+                validateAllMinos();
             }
-
-            if (allValid) {
-                validationDetails.innerHTML = `<span class="text-emerald-400 font-bold">✓ すべての条件をクリアしました！</span>`;
-                startGameBtn.disabled = false;
-                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg neon-glow-cyan cursor-pointer";
-            } else {
-                validationDetails.innerHTML = `<span class="text-pink-400">✗ 指定されたマス数・連結・重複ルールを満たしてください。</span>`;
-                startGameBtn.disabled = true;
-                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg";
+        });
+        window.addEventListener('pointercancel', () => {
+            if (isDrawing) {
+                isDrawing = false;
+                saveMinosToStorage();
+                validateAllMinos();
             }
-        }
+        });
 
-        window.addEventListener('pointerup', finishMinoDrawing);
-        window.addEventListener('pointercancel', finishMinoDrawing);
+        // ゲーム中のブラウザ標準スクロール・ピンチ操作を抑止
+        document.addEventListener('touchmove', (e) => {
+            if (!document.getElementById('game-screen').classList.contains('hidden') ||
+                !document.getElementById('settings-modal').classList.contains('hidden')) {
+                if (!e.target.closest('#settings-modal .overflow-y-auto')) e.preventDefault();
+            }
+        }, { passive: false });
+        document.addEventListener('gesturestart', (e) => {
+            if (!document.getElementById('game-screen').classList.contains('hidden')) e.preventDefault();
+        }, { passive: false });
 
         function getCanonicalSignature(matrix) {
             let coords = [];
@@ -669,8 +524,61 @@
             return count === coords.length;
         }
 
-        // 初期化実行
-        initEditorDOM();
+        function validateAllMinos() {
+            let signatures = new Set();
+            allValid = true;
+
+            for (let i = 0; i < 7; i++) {
+                let count = 0;
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        if (customMinos[i][r][c]) count++;
+                    }
+                }
+
+                let msg = "";
+                let isValid = true;
+                const targetCount = gameConfig.targetCounts[i];
+
+                if (count !== targetCount) {
+                    msg = `要${targetCount}マス (現在${count})`;
+                    isValid = false;
+                } else if (!checkConnectivity(customMinos[i])) {
+                    msg = `ブロックが分断されています`;
+                    isValid = false;
+                } else if (!gameConfig.allowOverlap) {
+                    let sig = getCanonicalSignature(customMinos[i]);
+                    if (signatures.has(sig)) {
+                        msg = `他のミノと形状が重複`;
+                        isValid = false;
+                    } else {
+                        signatures.add(sig);
+                    }
+                }
+
+                document.getElementById(`error-msg-${i}`).innerText = msg;
+                const badge = document.getElementById(`count-badge-${i}`);
+                if (isValid) {
+                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold";
+                } else {
+                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-pink-950 border border-pink-500/50 text-pink-400 font-bold";
+                }
+
+                if (!isValid) allValid = false;
+            }
+
+            if (allValid) {
+                validationDetails.innerHTML = `<span class="text-emerald-400 font-bold">✓ すべての条件をクリアしました！</span>`;
+                startGameBtn.disabled = false;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg neon-glow-cyan cursor-pointer";
+            } else {
+                validationDetails.innerHTML = `<span class="text-pink-400">✗ 指定されたマス数・連結・重複ルールを満たしてください。</span>`;
+                startGameBtn.disabled = true;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg";
+            }
+        }
+
+        initEditor();
 
         let gameStarted = false;
         const BOARD_WIDTH = 10;
@@ -702,7 +610,6 @@
 
         startGameBtn.onclick = () => {
             if (!allValid) return;
-            playSE('button');
             document.getElementById('editor-screen').classList.add('hidden');
             document.getElementById('game-screen').classList.remove('hidden');
             initGame();
@@ -721,9 +628,6 @@
             isAnimatingClear = false;
             isStagingGarbage = false;
             clearLockDelay();
-
-            // ゲームスタート時にbgm.mp3を確実に再生
-            startBgm();
 
             refillBag();
             nextQueue = [];
@@ -831,7 +735,6 @@
                     currentX += k.x;
                     currentY += k.y;
                     currentPiece = rotated;
-                    playSE('rotate');
                     resetLockDelayIfGrounded();
                     drawGame();
                     return;
@@ -843,7 +746,6 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX - 1, currentY, currentPiece)) {
                 currentX--;
-                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -853,7 +755,6 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX + 1, currentY, currentPiece)) {
                 currentX++;
-                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -863,10 +764,7 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX, currentY + 1, currentPiece)) {
                 currentY++;
-                if (isSoft) {
-                    score += 1;
-                    playSE('move');
-                }
+                if (isSoft) score += 1;
                 if (!checkCollision(currentX, currentY + 1, currentPiece)) {
                     clearLockDelay();
                 } else {
@@ -887,14 +785,12 @@
                 dropDist++;
             }
             score += dropDist * 2;
-            playSE('hard');
             lockPiece();
         }
 
         function holdPieceFunc() {
             if (!gameStarted || !canHold || isAnimatingClear || isStagingGarbage) return;
             clearLockDelay();
-            playSE('hold');
             if (holdPieceIndex === null) {
                 holdPieceIndex = currentMinoIndex;
                 spawnPiece();
@@ -937,7 +833,6 @@
 
             if (fullRows.length > 0) {
                 isAnimatingClear = true;
-                playSE('line');
                 drawGameWithFlash(fullRows, () => {
                     for (let r of fullRows) {
                         board.splice(r, 1);
@@ -954,7 +849,7 @@
 
         function finalizeLockSequence() {
             if (!gameStarted) return;
-            isAnimatingClear = false;
+            isAnimatingClear = false; // ★ここで確実にフラグをリセット
             score = (placedCount * 50) + clearedLinesScoreTotal;
             updateUIStats();
 
@@ -965,7 +860,6 @@
                 dropInterval = Math.max(50, dropInterval / gameConfig.speedMultiplier);
                 restartDropTimer();
 
-                playSE('speedup');
                 const cutin = document.getElementById('speedup-cutin');
                 document.getElementById('speedup-sub').innerText = `VELOCITY ${(1000/dropInterval).toFixed(1)}x`;
                 cutin.classList.remove('hidden');
@@ -997,18 +891,7 @@
             let numRows = gameConfig.garbageRowsCount;
             let holeCol = Math.floor(Math.random() * BOARD_WIDTH);
 
-            let currentRow = 0;
-            function addSingleGarbage() {
-                if (currentRow >= numRows) {
-                    setTimeout(() => {
-                        if (!gameStarted) return;
-                        isStagingGarbage = false;
-                        spawnPiece();
-                        drawGame();
-                    }, 150);
-                    return;
-                }
-
+            for (let i = 0; i < numRows; i++) {
                 if (board[0].some(cell => cell !== 0)) {
                     gameOver();
                     return;
@@ -1017,14 +900,15 @@
                 let garbageRow = Array(BOARD_WIDTH).fill(8);
                 garbageRow[holeCol] = 0;
                 board.push(garbageRow);
-
-                playSE('obstacle');
-                drawGame();
-                currentRow++;
-                setTimeout(addSingleGarbage, 180);
             }
 
-            addSingleGarbage();
+            drawGame();
+            setTimeout(() => {
+                if (!gameStarted) return;
+                isStagingGarbage = false;
+                spawnPiece();
+                drawGame();
+            }, 300);
         }
 
         function startDropTimer() {
@@ -1049,9 +933,6 @@
             if (softDropInterval) clearInterval(softDropInterval);
             if (kbSoftDropInterval) clearInterval(kbSoftDropInterval);
             
-            // BGMを停止
-            stopBgm();
-
             document.getElementById('game-controls').classList.add('hidden');
 
             document.getElementById('res-placed').innerText = placedCount;
@@ -1074,31 +955,19 @@
         const ctx = canvas.getContext('2d');
         const holdCanvas = document.getElementById('hold-canvas');
         const holdCtx = holdCanvas.getContext('2d');
-        const nextContexts = Array.from({ length: 6 }, (_, i) =>
-            document.getElementById(`next-canvas-${i}`).getContext('2d')
-        );
-        let lastPreviewKey = null;
         const BLOCK_SIZE = 18;
 
         function drawGame() {
             ctx.fillStyle = '#030712';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // グリッド線の描画最適化
             ctx.strokeStyle = '#0f172a';
             ctx.lineWidth = 0.5;
-            ctx.beginPath();
-            for (let c = 0; c <= BOARD_WIDTH; c++) {
-                const x = c * BLOCK_SIZE + 0.25;
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, BOARD_HEIGHT * BLOCK_SIZE);
+            for (let r = 0; r < BOARD_HEIGHT; r++) {
+                for (let c = 0; c < BOARD_WIDTH; c++) {
+                    ctx.strokeRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                }
             }
-            for (let r = 0; r <= BOARD_HEIGHT; r++) {
-                const y = r * BLOCK_SIZE + 0.25;
-                ctx.moveTo(0, y);
-                ctx.lineTo(BOARD_WIDTH * BLOCK_SIZE, y);
-            }
-            ctx.stroke();
 
             for (let r = 0; r < BOARD_HEIGHT; r++) {
                 for (let c = 0; c < BOARD_WIDTH; c++) {
@@ -1164,12 +1033,10 @@
         }
 
         function drawMiniPreviews() {
-            const key = `${holdPieceIndex}|${nextQueue.join(',')}`;
-            if (key === lastPreviewKey) return;
-            lastPreviewKey = key;
             drawMiniPreview(holdCtx, holdPieceIndex, 50);
             for (let i = 0; i < 6; i++) {
-                drawMiniPreview(nextContexts[i], nextQueue[i], 44);
+                const nCtx = document.getElementById(`next-canvas-${i}`).getContext('2d');
+                drawMiniPreview(nCtx, nextQueue[i], 44);
             }
         }
 
