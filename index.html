@@ -244,10 +244,11 @@
             speedup: 'speedup.mp3',
             hard: 'hard.mp3'
         };
-        const soundURL = filename => new URL(filename, document.baseURI).href;
-        const sounds = {
-            bgm: new Audio(soundURL(SOUND_FILES.bgm))
-        };
+        // GitHub Pagesではファイル名の大文字・小文字が区別されるため、BGMのみ表記違いも順番に試す。
+        // URLはHTMLファイルが置かれたディレクトリ基準で作り、プロジェクトページ配下でも動くようにする。
+        const BGM_CANDIDATES = ['bgm.mp3', 'BGM.mp3', 'Bgm.mp3', 'BGm.mp3', 'bgm.MP3', 'BGM.MP3', 'Bgm.MP3', 'BGm.MP3'];
+        const soundURL = filename => new URL(filename, new URL('.', window.location.href)).href;
+        const sounds = { bgm: new Audio() };
         // 通常のSE再生はデコード済みAudioBufferを使い、MP3要素はWeb Audioが使えない場合の予備にする。
         for (const name of Object.keys(SOUND_FILES)) {
             if (name === 'bgm') continue;
@@ -383,38 +384,71 @@
             return true;
         }
 
-        // BGMはMP3だけ。play()はゲーム開始ボタンのユーザー操作内から呼ぶ。
+        // MP3だけを再生する。最初のファイルが404等で失敗しても、別表記を自動で試す。
+        function loadBgmCandidate(index) {
+            const audio = sounds.bgm;
+            bgmCandidateIndex = index;
+            bgmLoadFailed = false;
+            audio.pause();
+            audio.src = soundURL(BGM_CANDIDATES[index]);
+            audio.load();
+        }
+
         function requestBgmPlayback(resetPosition = false) {
-            if (!bgmRequested || bgmLoadFailed || sounds.bgm.error) return;
+            if (!bgmRequested) return;
+            // 初回ロード失敗で永久に再生不能にならないよう、ユーザー操作で再試行可能にする。
+            if (bgmLoadFailed) loadBgmCandidate(0);
             if (resetPosition) {
                 try { sounds.bgm.currentTime = 0; } catch (e) {}
             }
             try {
                 const result = sounds.bgm.play();
                 if (result && typeof result.then === 'function') {
-                    result.then(() => { bgmNeedsRetry = false; }).catch(error => {
-                        // ポリシーで拒否された場合は、次のユーザー操作時にMP3の再生を再試行する。
-                        bgmNeedsRetry = !!(error && (error.name === 'NotAllowedError' || error.name === 'AbortError'));
-                        if (!bgmNeedsRetry) console.warn('BGM MP3の再生に失敗しました。bgm.mp3の配置と名前を確認してください。', error);
+                    result.then(() => { bgmNeedsRetry = false; bgmLoadFailed = false; }).catch(error => {
+                        // 自動再生制限・読み込み中断・ネットワークエラーは、次のユーザー操作で再試行。
+                        bgmNeedsRetry = true;
+                        if (error && error.name !== 'NotAllowedError' && error.name !== 'AbortError') {
+                            console.warn('BGMの再生要求に失敗しました。現在のURL:', sounds.bgm.currentSrc || sounds.bgm.src, error);
+                        }
                     });
                 }
             } catch (error) {
-                bgmNeedsRetry = !!(error && (error.name === 'NotAllowedError' || error.name === 'AbortError'));
+                bgmNeedsRetry = true;
+                console.warn('BGMの再生要求に失敗しました。現在のURL:', sounds.bgm.currentSrc || sounds.bgm.src, error);
             }
         }
 
-        sounds.bgm.addEventListener('playing', () => { bgmNeedsRetry = false; bgmLoadFailed = false; });
-        sounds.bgm.addEventListener('error', () => {
-            bgmLoadFailed = true;
+        sounds.bgm.addEventListener('playing', () => {
             bgmNeedsRetry = false;
-            console.warn('BGM MP3を読み込めません。bgm.mp3がHTMLと同じ階層にあり、名前の大文字・小文字が一致しているか確認してください。');
+            bgmLoadFailed = false;
         });
-        // error/playingハンドラーを登録してから先読みを開始する。
-        sounds.bgm.load();
+        sounds.bgm.addEventListener('error', () => {
+            const failedName = BGM_CANDIDATES[bgmCandidateIndex];
+            if (bgmCandidateIndex < BGM_CANDIDATES.length - 1) {
+                const nextIndex = bgmCandidateIndex + 1;
+                console.warn(`BGM '${failedName}' を読み込めなかったため '${BGM_CANDIDATES[nextIndex]}' を試します。`);
+                loadBgmCandidate(nextIndex);
+                if (bgmRequested) {
+                    bgmNeedsRetry = true;
+                    // エラー後もその場で再生を試す。ユーザー操作が必要なら次のタップで再試行する。
+                    requestBgmPlayback(false);
+                }
+            } else {
+                bgmLoadFailed = true;
+                bgmNeedsRetry = bgmRequested;
+                console.error('BGM MP3を読み込めませんでした。試したURL:', BGM_CANDIDATES.map(soundURL));
+                console.error('GitHub上でMP3がHTMLと同じフォルダにコミットされているか、ファイル名・拡張子の大文字小文字を確認してください。');
+            }
+        });
+        // ハンドラー登録後、HTMLの位置を基準にBGMを先読みする。
+        let bgmCandidateIndex = 0;
+        loadBgmCandidate(0);
 
         function startBgm() {
             bgmRequested = true;
             bgmNeedsRetry = false;
+            if (bgmLoadFailed) loadBgmCandidate(0);
+            // 重要：ゲーム開始ボタンのユーザー操作中に直接 play() を呼び出す。
             requestBgmPlayback(true);
         }
 
@@ -461,7 +495,7 @@
         // 最初のタッチ/クリック/キー入力でWeb Audioを解錠。開始操作後にBGMが拒否されていたら再試行。
         function handleAudioGesture() {
             unlockAudio();
-            if (gameStarted && bgmRequested && bgmNeedsRetry && !bgmLoadFailed) {
+            if (gameStarted && bgmRequested && (bgmNeedsRetry || bgmLoadFailed || sounds.bgm.error)) {
                 requestBgmPlayback(false);
             }
         }
@@ -909,7 +943,7 @@
             isStagingGarbage = false;
             clearLockDelay();
 
-            // MP3が再生できない環境では、自動的に内蔵シンセBGMへ切り替える。
+            // MP3 BGMをゲーム開始操作内で開始する。
             startBgm();
 
             refillBag();
@@ -1236,7 +1270,7 @@
             if (softDropInterval) clearInterval(softDropInterval);
             if (kbSoftDropInterval) clearInterval(kbSoftDropInterval);
             
-            // BGMを停止（MP3・内蔵シンセの両方）
+            // BGMのMP3を停止
             stopBgm();
 
             document.getElementById('game-controls').classList.add('hidden');
