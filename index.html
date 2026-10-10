@@ -233,6 +233,102 @@
     </div>
 
     <script>
+        // BGMは bgm.mp3 のみを再生し、内蔵シンセによる曲生成・切り替え処理は行わない。
+        // 効果音のみ、MP3再生失敗時にWeb Audioで代替する。
+        // GitHub Pagesではファイル名の大文字・小文字が区別されるため、bgm.mp3 の綴りを一致させる。
+        const sounds = {
+            bgm: new Audio(new URL('./bgm.mp3', document.baseURI).href),
+            hold: new Audio(new URL('./hold.mp3', document.baseURI).href),
+            rotate: new Audio(new URL('./rotate.mp3', document.baseURI).href),
+            move: new Audio(new URL('./move.mp3', document.baseURI).href),
+            line: new Audio(new URL('./Line.mp3', document.baseURI).href),
+            button: new Audio(new URL('./button.mp3', document.baseURI).href),
+            obstacle: new Audio(new URL('./obstacle.mp3', document.baseURI).href),
+            speedup: new Audio(new URL('./speedup.mp3', document.baseURI).href),
+            hard: new Audio(new URL('./hard.mp3', document.baseURI).href)
+        };
+
+        sounds.bgm.loop = true;
+        sounds.bgm.volume = 0.4;
+        sounds.bgm.preload = 'auto';
+
+        let audioContext = null;
+
+        function getAudioContext() {
+            if (!audioContext) {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextClass) return null;
+                audioContext = new AudioContextClass();
+            }
+            if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+            return audioContext;
+        }
+
+        function playSynthTone(frequency, startTime, duration, waveform = 'triangle', volume = 0.04) {
+            const ac = getAudioContext();
+            if (!ac || !Number.isFinite(frequency) || frequency <= 0) return;
+            const osc = ac.createOscillator();
+            const gain = ac.createGain();
+            osc.type = waveform;
+            osc.frequency.setValueAtTime(frequency, startTime);
+            gain.gain.setValueAtTime(0.0001, startTime);
+            gain.gain.linearRampToValueAtTime(volume, startTime + 0.012);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.max(0.04, duration));
+            osc.connect(gain);
+            gain.connect(ac.destination);
+            osc.start(startTime);
+            osc.stop(startTime + duration + 0.03);
+        }
+
+        function playSynthSE(name) {
+            const ac = getAudioContext();
+            if (!ac) return;
+            const now = ac.currentTime + 0.015;
+            const tones = {
+                button: [660, 0.07], move: [220, 0.045], rotate: [520, 0.09],
+                hold: [330, 0.12], line: [880, 0.22], obstacle: [130, 0.18],
+                speedup: [740, 0.2], hard: [165, 0.15]
+            };
+            const [freq, duration] = tones[name] || [440, 0.08];
+            const waveform = (name === 'hard' || name === 'obstacle') ? 'sawtooth' : 'square';
+            playSynthTone(freq, now, duration, waveform, name === 'move' ? 0.012 : 0.035);
+            if (name === 'line' || name === 'speedup') {
+                playSynthTone(freq * 1.25, now + 0.09, duration, 'triangle', 0.025);
+            }
+        }
+
+        function startBgm() {
+            sounds.bgm.pause();
+            sounds.bgm.currentTime = 0;
+            const result = sounds.bgm.play();
+            if (result && typeof result.catch === 'function') {
+                result.catch(error => {
+                    // 自動再生制限やファイル未配置などの原因確認用。BGMは指定のMP3のみを再生する。
+                    console.warn('bgm.mp3 を再生できません。ファイルの配置・名前とブラウザの音声設定を確認してください。', error);
+                });
+            }
+        }
+
+        function stopBgm() {
+            sounds.bgm.pause();
+            sounds.bgm.currentTime = 0;
+        }
+
+        function playSE(name) {
+            const sound = sounds[name];
+            if (!sound) {
+                playSynthSE(name);
+                return;
+            }
+            try {
+                sound.currentTime = 0;
+                const result = sound.play();
+                if (result && typeof result.catch === 'function') result.catch(() => playSynthSE(name));
+            } catch (e) {
+                playSynthSE(name);
+            }
+        }
+
         const DEFAULT_CONFIG = {
             targetCounts: [3, 3, 4, 4, 5, 6, 7],
             allowOverlap: false,
@@ -610,6 +706,7 @@
 
         startGameBtn.onclick = () => {
             if (!allValid) return;
+            playSE('button');
             document.getElementById('editor-screen').classList.add('hidden');
             document.getElementById('game-screen').classList.remove('hidden');
             initGame();
@@ -628,6 +725,10 @@
             isAnimatingClear = false;
             isStagingGarbage = false;
             clearLockDelay();
+
+            // Use bgm.mp3 directly; calling this during the start-button click
+            // keeps mobile-browser autoplay restrictions satisfied.
+            startBgm();
 
             refillBag();
             nextQueue = [];
@@ -735,6 +836,7 @@
                     currentX += k.x;
                     currentY += k.y;
                     currentPiece = rotated;
+                    playSE('rotate');
                     resetLockDelayIfGrounded();
                     drawGame();
                     return;
@@ -746,6 +848,7 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX - 1, currentY, currentPiece)) {
                 currentX--;
+                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -755,6 +858,7 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX + 1, currentY, currentPiece)) {
                 currentX++;
+                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -764,7 +868,10 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX, currentY + 1, currentPiece)) {
                 currentY++;
-                if (isSoft) score += 1;
+                if (isSoft) {
+                    score += 1;
+                    playSE('move');
+                }
                 if (!checkCollision(currentX, currentY + 1, currentPiece)) {
                     clearLockDelay();
                 } else {
@@ -785,12 +892,14 @@
                 dropDist++;
             }
             score += dropDist * 2;
+            playSE('hard');
             lockPiece();
         }
 
         function holdPieceFunc() {
             if (!gameStarted || !canHold || isAnimatingClear || isStagingGarbage) return;
             clearLockDelay();
+            playSE('hold');
             if (holdPieceIndex === null) {
                 holdPieceIndex = currentMinoIndex;
                 spawnPiece();
@@ -833,6 +942,7 @@
 
             if (fullRows.length > 0) {
                 isAnimatingClear = true;
+                playSE('line');
                 drawGameWithFlash(fullRows, () => {
                     for (let r of fullRows) {
                         board.splice(r, 1);
@@ -860,6 +970,7 @@
                 dropInterval = Math.max(50, dropInterval / gameConfig.speedMultiplier);
                 restartDropTimer();
 
+                playSE('speedup');
                 const cutin = document.getElementById('speedup-cutin');
                 document.getElementById('speedup-sub').innerText = `VELOCITY ${(1000/dropInterval).toFixed(1)}x`;
                 cutin.classList.remove('hidden');
@@ -888,6 +999,7 @@
 
         function triggerGarbageRows() {
             isStagingGarbage = true;
+            playSE('obstacle');
             let numRows = gameConfig.garbageRowsCount;
             let holeCol = Math.floor(Math.random() * BOARD_WIDTH);
 
@@ -932,7 +1044,8 @@
             if (dropTimer) clearInterval(dropTimer);
             if (softDropInterval) clearInterval(softDropInterval);
             if (kbSoftDropInterval) clearInterval(kbSoftDropInterval);
-            
+
+            stopBgm();
             document.getElementById('game-controls').classList.add('hidden');
 
             document.getElementById('res-placed').innerText = placedCount;
