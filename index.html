@@ -230,18 +230,19 @@
     </div>
 
     <script>
-        // MP3が配置されていない場合にも音が出るよう、Web Audioによる代替音源を用意。
-        // GitHub Pagesはファイル名の大文字・小文字を区別するため、MP3がない場合も自動でフォールバックする。
+        // BGMは bgm.mp3 のみを再生し、内蔵シンセによる曲生成・切り替え処理は行わない。
+        // 効果音のみ、MP3再生失敗時にWeb Audioで代替する。
+        // GitHub Pagesではファイル名の大文字・小文字が区別されるため、bgm.mp3 の綴りを一致させる。
         const sounds = {
-            bgm: new Audio(new URL('bgm.mp3', document.baseURI).href),
-            hold: new Audio(new URL('hold.mp3', document.baseURI).href),
-            rotate: new Audio(new URL('rotate.mp3', document.baseURI).href),
-            move: new Audio(new URL('move.mp3', document.baseURI).href),
-            line: new Audio(new URL('Line.mp3', document.baseURI).href),
-            button: new Audio(new URL('button.mp3', document.baseURI).href),
-            obstacle: new Audio(new URL('obstacle.mp3', document.baseURI).href),
-            speedup: new Audio(new URL('speedup.mp3', document.baseURI).href),
-            hard: new Audio(new URL('hard.mp3', document.baseURI).href)
+            bgm: new Audio(new URL('./bgm.mp3', document.baseURI).href),
+            hold: new Audio(new URL('./hold.mp3', document.baseURI).href),
+            rotate: new Audio(new URL('./rotate.mp3', document.baseURI).href),
+            move: new Audio(new URL('./move.mp3', document.baseURI).href),
+            line: new Audio(new URL('./Line.mp3', document.baseURI).href),
+            button: new Audio(new URL('./button.mp3', document.baseURI).href),
+            obstacle: new Audio(new URL('./obstacle.mp3', document.baseURI).href),
+            speedup: new Audio(new URL('./speedup.mp3', document.baseURI).href),
+            hard: new Audio(new URL('./hard.mp3', document.baseURI).href)
         };
 
         sounds.bgm.loop = true;
@@ -249,8 +250,6 @@
         sounds.bgm.preload = 'auto';
 
         let audioContext = null;
-        let synthBgmTimer = null;
-        let synthBgmStep = 0;
 
         function getAudioContext() {
             if (!audioContext) {
@@ -295,68 +294,21 @@
             }
         }
 
-        function stopSynthBgm() {
-            if (synthBgmTimer !== null) {
-                clearInterval(synthBgmTimer);
-                synthBgmTimer = null;
-            }
-        }
-
-        function startSynthBgm() {
-            if (synthBgmTimer !== null) return;
-            // 短いシンセ・アルペジオをループ。MP3の配置・パスに依存しない。
-            sounds.bgm.pause();
-            const ac = getAudioContext();
-            if (!ac) return;
-            synthBgmStep = 0;
-            let nextNoteTime = ac.currentTime + 0.06;
-            const stepDuration = 60 / 112 / 4;
-            const melody = [76, null, 79, 83, null, 79, 74, null, 72, null, 76, 79, null, 76, 74, null,
-                            71, null, 74, 79, null, 74, 71, null, 69, null, 72, 76, null, 72, 71, null];
-            const bassRoots = [40, 36, 43, 38];
-            const midiToHz = n => 440 * Math.pow(2, (n - 69) / 12);
-            const scheduler = () => {
-                const ctx = getAudioContext();
-                if (!ctx) return;
-                while (nextNoteTime < ctx.currentTime + 0.16) {
-                    const step = synthBgmStep % melody.length;
-                    const note = melody[step];
-                    if (note !== null) playSynthTone(midiToHz(note), nextNoteTime, stepDuration * 0.78, 'square', 0.018);
-                    if (step % 8 === 0) {
-                        const root = bassRoots[Math.floor(step / 8) % bassRoots.length];
-                        playSynthTone(midiToHz(root), nextNoteTime, stepDuration * 3.2, 'triangle', 0.045);
-                    }
-                    synthBgmStep++;
-                    nextNoteTime += stepDuration;
-                }
-            };
-            scheduler();
-            synthBgmTimer = setInterval(scheduler, 50);
-        }
-
         function startBgm() {
-            stopSynthBgm();
+            sounds.bgm.pause();
             sounds.bgm.currentTime = 0;
-            try {
-                const result = sounds.bgm.play();
-                if (result && typeof result.catch === 'function') {
-                    result.catch(() => {
-                        if (gameStarted) startSynthBgm();
-                    });
-                }
-            } catch (e) {
-                startSynthBgm();
+            const result = sounds.bgm.play();
+            if (result && typeof result.catch === 'function') {
+                result.catch(error => {
+                    // 自動再生制限やファイル未配置などの原因確認用。BGMは指定のMP3のみを再生する。
+                    console.warn('bgm.mp3 を再生できません。ファイルの配置・名前とブラウザの音声設定を確認してください。', error);
+                });
             }
         }
-
-        sounds.bgm.addEventListener('error', () => {
-            if (gameStarted) startSynthBgm();
-        });
 
         function stopBgm() {
             sounds.bgm.pause();
             sounds.bgm.currentTime = 0;
-            stopSynthBgm();
         }
 
         function playSE(name) {
@@ -811,7 +763,7 @@
             isStagingGarbage = false;
             clearLockDelay();
 
-            // MP3が再生できない環境では、自動的に内蔵シンセBGMへ切り替える。
+            // BGMは bgm.mp3 を再生する。開始操作のクリック中に呼び出して自動再生制限を回避する。
             startBgm();
 
             refillBag();
@@ -1138,7 +1090,7 @@
             if (softDropInterval) clearInterval(softDropInterval);
             if (kbSoftDropInterval) clearInterval(kbSoftDropInterval);
             
-            // BGMを停止（MP3・内蔵シンセの両方）
+            // BGMを停止
             stopBgm();
 
             document.getElementById('game-controls').classList.add('hidden');
