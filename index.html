@@ -230,34 +230,95 @@
     </div>
 
     <script>
-        // BGMはbgm.mp3を使用。SEは各MP3を優先し、再生できない場合のみWeb Audioで代替する。
-        // GitHub Pagesではファイル名の大文字・小文字が区別されるため、Line.mp3等の名前も合わせる。
-        const sounds = {
-            bgm: new Audio(new URL('bgm.mp3', document.baseURI).href),
-            hold: new Audio(new URL('hold.mp3', document.baseURI).href),
-            rotate: new Audio(new URL('rotate.mp3', document.baseURI).href),
-            move: new Audio(new URL('move.mp3', document.baseURI).href),
-            line: new Audio(new URL('Line.mp3', document.baseURI).href),
-            button: new Audio(new URL('button.mp3', document.baseURI).href),
-            obstacle: new Audio(new URL('obstacle.mp3', document.baseURI).href),
-            speedup: new Audio(new URL('speedup.mp3', document.baseURI).href),
-            hard: new Audio(new URL('hard.mp3', document.baseURI).href)
+        // BGMはHTMLAudioElementでMP3をループ再生。
+        // 短いSEはMP3を先読み・デコードし、Web AudioのAudioBufferから低遅延で再生する。
+        // シンセ音はSEのMP3がまだ未読込/失敗した場合のみ代替に使い、シンセBGMは生成しない。
+        const SOUND_FILES = {
+            bgm: 'bgm.mp3',
+            hold: 'hold.mp3',
+            rotate: 'rotate.mp3',
+            move: 'move.mp3',
+            line: 'Line.mp3',
+            button: 'button.mp3',
+            obstacle: 'obstacle.mp3',
+            speedup: 'speedup.mp3',
+            hard: 'hard.mp3'
         };
-
+        const soundURL = filename => new URL(filename, document.baseURI).href;
+        const sounds = {
+            bgm: new Audio(soundURL(SOUND_FILES.bgm))
+        };
+        // 通常のSE再生はデコード済みAudioBufferを使い、MP3要素はWeb Audioが使えない場合の予備にする。
+        for (const name of Object.keys(SOUND_FILES)) {
+            if (name === 'bgm') continue;
+            sounds[name] = new Audio(soundURL(SOUND_FILES[name]));
+            sounds[name].preload = 'none';
+        }
         sounds.bgm.loop = true;
         sounds.bgm.volume = 0.4;
         sounds.bgm.preload = 'auto';
+        sounds.bgm.playsInline = true;
 
         let audioContext = null;
+        let seMasterGain = null;
+        const seBuffers = Object.create(null);
+        const seLoadStatus = Object.create(null);
+        const lastSETime = Object.create(null);
+        let bgmRequested = false;
+        let bgmNeedsRetry = false;
+        let bgmLoadFailed = false;
 
         function getAudioContext() {
-            if (!audioContext) {
+            if (!audioContext || audioContext.state === 'closed') {
                 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
                 if (!AudioContextClass) return null;
-                audioContext = new AudioContextClass();
+                try {
+                    audioContext = new AudioContextClass({ latencyHint: 'interactive' });
+                } catch (e) {
+                    try { audioContext = new AudioContextClass(); }
+                    catch (e2) { return null; }
+                }
+                seMasterGain = audioContext.createGain();
+                seMasterGain.gain.value = 1;
+                seMasterGain.connect(audioContext.destination);
             }
-            if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
             return audioContext;
+        }
+
+        function unlockAudio() {
+            const ac = getAudioContext();
+            if (ac && ac.state === 'suspended') {
+                // ユーザー操作の同期ハンドラ内でresumeを呼び、モバイルの再生制限を解除する。
+                const resumed = ac.resume();
+                if (resumed && typeof resumed.catch === 'function') resumed.catch(() => {});
+            }
+        }
+
+        async function preloadSEBuffers() {
+            const ac = getAudioContext();
+            if (!ac || typeof fetch !== 'function' || typeof ac.decodeAudioData !== 'function') {
+                for (const name of Object.keys(SOUND_FILES)) {
+                    if (name !== 'bgm') seLoadStatus[name] = 'failed';
+                }
+                return;
+            }
+            const names = Object.keys(SOUND_FILES).filter(name => name !== 'bgm');
+            await Promise.all(names.map(async name => {
+                seLoadStatus[name] = 'loading';
+                try {
+                    const response = await fetch(soundURL(SOUND_FILES[name]), { cache: 'force-cache' });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const fileData = await response.arrayBuffer();
+                    // decodeAudioDataは完全なファイルデータが必要。デコード結果は繰り返し使い回す。
+                    const buffer = await ac.decodeAudioData(fileData.slice(0));
+                    seBuffers[name] = buffer;
+                    seLoadStatus[name] = 'ready';
+                } catch (error) {
+                    seLoadStatus[name] = 'failed';
+                    // MP3がない/取得できない時は、SE専用の簡易フォールバックを使う。
+                    console.warn(`SE MP3を読み込めませんでした: ${SOUND_FILES[name]}`, error);
+                }
+            }));
         }
 
         function playSynthTone(frequency, startTime, duration, waveform = 'triangle', volume = 0.04) {
@@ -268,18 +329,19 @@
             osc.type = waveform;
             osc.frequency.setValueAtTime(frequency, startTime);
             gain.gain.setValueAtTime(0.0001, startTime);
-            gain.gain.linearRampToValueAtTime(volume, startTime + 0.012);
-            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.max(0.04, duration));
+            gain.gain.linearRampToValueAtTime(volume, startTime + 0.008);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.max(0.035, duration));
             osc.connect(gain);
-            gain.connect(ac.destination);
+            gain.connect(seMasterGain || ac.destination);
             osc.start(startTime);
-            osc.stop(startTime + duration + 0.03);
+            osc.stop(startTime + duration + 0.025);
         }
 
         function playSynthSE(name) {
             const ac = getAudioContext();
             if (!ac) return;
-            const now = ac.currentTime + 0.015;
+            unlockAudio();
+            const now = ac.currentTime + 0.006;
             const tones = {
                 button: [660, 0.07], move: [220, 0.045], rotate: [520, 0.09],
                 hold: [330, 0.12], line: [880, 0.22], obstacle: [130, 0.18],
@@ -289,37 +351,83 @@
             const waveform = (name === 'hard' || name === 'obstacle') ? 'sawtooth' : 'square';
             playSynthTone(freq, now, duration, waveform, name === 'move' ? 0.012 : 0.035);
             if (name === 'line' || name === 'speedup') {
-                playSynthTone(freq * 1.25, now + 0.09, duration, 'triangle', 0.025);
+                playSynthTone(freq * 1.25, now + 0.07, duration, 'triangle', 0.022);
             }
         }
 
-        function startBgm() {
-            // BGMはMP3のみ。自動再生制限などで失敗した場合もシンセ曲には切り替えない。
-            sounds.bgm.pause();
-            sounds.bgm.currentTime = 0;
+        function playBufferSE(name) {
+            const ac = getAudioContext();
+            const buffer = seBuffers[name];
+            if (!ac || !buffer) return false;
+            // suspended時もsourceを用意し、resume完了直後に鳴らせるようにする。
+            const playNow = () => {
+                if (!audioContext || audioContext.state === 'closed') return;
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(seMasterGain || audioContext.destination);
+                source.start(0);
+            };
+            if (ac.state === 'running') {
+                playNow();
+            } else {
+                const resumed = ac.resume();
+                if (resumed && typeof resumed.then === 'function') {
+                    resumed.then(() => {
+                        if (ac.state === 'running') playNow();
+                        else playNativeSE(name);
+                    }).catch(() => playNativeSE(name));
+                } else {
+                    playNow();
+                }
+            }
+            return true;
+        }
+
+        // BGMはMP3だけ。play()はゲーム開始ボタンのユーザー操作内から呼ぶ。
+        function requestBgmPlayback(resetPosition = false) {
+            if (!bgmRequested || bgmLoadFailed || sounds.bgm.error) return;
+            if (resetPosition) {
+                try { sounds.bgm.currentTime = 0; } catch (e) {}
+            }
             try {
                 const result = sounds.bgm.play();
-                if (result && typeof result.catch === 'function') {
-                    result.catch(() => {
-                        // ブラウザ側で再生が許可されていない場合は無音のままにする。
+                if (result && typeof result.then === 'function') {
+                    result.then(() => { bgmNeedsRetry = false; }).catch(error => {
+                        // ポリシーで拒否された場合は、次のユーザー操作時にMP3の再生を再試行する。
+                        bgmNeedsRetry = !!(error && (error.name === 'NotAllowedError' || error.name === 'AbortError'));
+                        if (!bgmNeedsRetry) console.warn('BGM MP3の再生に失敗しました。bgm.mp3の配置と名前を確認してください。', error);
                     });
                 }
-            } catch (e) {
-                // MP3再生に失敗してもシンセBGMは生成しない。
+            } catch (error) {
+                bgmNeedsRetry = !!(error && (error.name === 'NotAllowedError' || error.name === 'AbortError'));
             }
+        }
+
+        sounds.bgm.addEventListener('playing', () => { bgmNeedsRetry = false; bgmLoadFailed = false; });
+        sounds.bgm.addEventListener('error', () => {
+            bgmLoadFailed = true;
+            bgmNeedsRetry = false;
+            console.warn('BGM MP3を読み込めません。bgm.mp3がHTMLと同じ階層にあり、名前の大文字・小文字が一致しているか確認してください。');
+        });
+        // error/playingハンドラーを登録してから先読みを開始する。
+        sounds.bgm.load();
+
+        function startBgm() {
+            bgmRequested = true;
+            bgmNeedsRetry = false;
+            requestBgmPlayback(true);
         }
 
         function stopBgm() {
+            bgmRequested = false;
+            bgmNeedsRetry = false;
             sounds.bgm.pause();
-            sounds.bgm.currentTime = 0;
+            try { sounds.bgm.currentTime = 0; } catch (e) {}
         }
 
-        function playSE(name) {
+        function playNativeSE(name) {
             const sound = sounds[name];
-            if (!sound) {
-                playSynthSE(name);
-                return;
-            }
+            if (!sound) { playSynthSE(name); return; }
             try {
                 sound.currentTime = 0;
                 const result = sound.play();
@@ -328,6 +436,40 @@
                 playSynthSE(name);
             }
         }
+
+        function playSE(name) {
+            if (!SOUND_FILES[name] || name === 'bgm') return;
+            unlockAudio();
+
+            // 連続移動などで効果音を大量生成しないよう最小間隔を設定。入力自体は妨げない。
+            const now = performance.now();
+            const minGap = name === 'move' ? 38 : (name === 'button' ? 28 : 18);
+            if (lastSETime[name] !== undefined && now - lastSETime[name] < minGap) return;
+            lastSETime[name] = now;
+
+            // MP3を事前デコードできていれば、Audio要素のcurrentTimeリセットを使わず即時・重ねて再生。
+            if (seBuffers[name] && playBufferSE(name)) return;
+            if (seLoadStatus[name] === 'failed') {
+                // Web Audioでの読込/デコードに失敗した環境では、元のSE MP3を通常再生してみる。
+                playNativeSE(name);
+                return;
+            }
+            // デコード完了前は、遅れてMP3が鳴るよりも操作にすぐ反応する短いSE音を優先。
+            playSynthSE(name);
+        }
+
+        // 最初のタッチ/クリック/キー入力でWeb Audioを解錠。開始操作後にBGMが拒否されていたら再試行。
+        function handleAudioGesture() {
+            unlockAudio();
+            if (gameStarted && bgmRequested && bgmNeedsRetry && !bgmLoadFailed) {
+                requestBgmPlayback(false);
+            }
+        }
+        document.addEventListener('pointerdown', handleAudioGesture, { capture: true, passive: true });
+        document.addEventListener('keydown', handleAudioGesture, { capture: true });
+
+        // SEの読込は非同期で先行させ、ゲーム開始前にデコードを済ませる。
+        preloadSEBuffers();
 
         const DEFAULT_CONFIG = {
             targetCounts: [3, 3, 4, 4, 5, 6, 7],
@@ -746,6 +888,7 @@
 
         startGameBtn.onclick = () => {
             if (!allValid) return;
+            unlockAudio();
             playSE('button');
             document.getElementById('editor-screen').classList.add('hidden');
             document.getElementById('game-screen').classList.remove('hidden');
