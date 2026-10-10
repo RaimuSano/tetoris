@@ -226,7 +226,7 @@
             button: new Audio('button.mp3'),
             obstacle: new Audio('obstacle.mp3'),
             speedup: new Audio('speedup.mp3'),
-            hard: new Audio('hard.mp3') // 追加
+            hard: new Audio('hard.mp3')
         };
 
         sounds.bgm.loop = true;
@@ -236,7 +236,9 @@
             let s = sounds[name];
             if (s) {
                 s.currentTime = 0;
-                s.play().catch(e => {});
+                s.play().catch(e => {
+                    console.warn(`SE play error (${name}):`, e);
+                });
             }
         }
 
@@ -250,7 +252,7 @@
             garbageRowsCount: 3
         };
 
-        // LocalStorageからの読み込み（設定・ミノ形状）[cite: 4]
+        // LocalStorageからの読み込み（設定・ミノ形状）
         let gameConfig = (() => {
             try {
                 let saved = localStorage.getItem('neon_tetris_config');
@@ -304,7 +306,7 @@
             syncUIToSettings();
             saveConfigToStorage();
             settingsModal.classList.add('hidden');
-            initEditor();
+            updateEditorUI();
         };
 
         document.getElementById('reset-settings-btn').onclick = () => {
@@ -312,7 +314,7 @@
             gameConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
             saveConfigToStorage();
             syncSettingsToUI();
-            initEditor();
+            updateEditorUI();
         };
 
         // ミノリセットボタン
@@ -321,7 +323,7 @@
             if (confirm('描いたミノをすべてリセットしてまっさらにしますか？')) {
                 customMinos = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4).fill(0)));
                 saveMinosToStorage();
-                initEditor();
+                updateEditorUI();
             }
         };
 
@@ -361,9 +363,19 @@
             }
         }
 
-        function initEditor() {
+        // --- パフォーマンス改善：エディターのDOMを最初だけ生成し、差分更新する仕組み ---
+        let editorCells = [];
+        let countBadges = [];
+        let errorMsgDivs = [];
+
+        function initEditorDOM() {
             editorContainer.innerHTML = '';
+            editorCells = [];
+            countBadges = [];
+            errorMsgDivs = [];
+
             for (let i = 0; i < 7; i++) {
+                editorCells[i] = [];
                 const card = document.createElement('div');
                 card.className = 'bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 flex flex-col items-center shadow-md';
                 
@@ -377,23 +389,15 @@
                     <span id="count-badge-${i}" class="text-[9px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">目標: ${gameConfig.targetCounts[i]}マス</span>
                 `;
                 card.appendChild(header);
+                countBadges[i] = header.querySelector(`#count-badge-${i}`);
 
                 const grid = document.createElement('div');
                 grid.className = 'mino-grid grid grid-cols-4 gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800';
                 for (let r = 0; r < 4; r++) {
+                    editorCells[i][r] = [];
                     for (let c = 0; c < 4; c++) {
                         const cell = document.createElement('div');
-                        const isActive = customMinos[i][r][c];
-                        cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border ' + 
-                            (isActive ? 'shadow-md scale-95' : 'bg-slate-900 hover:bg-slate-800 border-slate-800/60');
-                        
-                        if (isActive) {
-                            cell.style.backgroundColor = MINO_COLORS[i];
-                            cell.style.borderColor = '#ffffff';
-                            cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
-                        } else {
-                            cell.style.backgroundColor = '#0f172a';
-                        }
+                        cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border';
                         
                         cell.onpointerdown = (e) => {
                             e.preventDefault();
@@ -401,17 +405,18 @@
                             drawTargetState = customMinos[i][r][c] ? 0 : 1;
                             customMinos[i][r][c] = drawTargetState;
                             saveMinosToStorage();
-                            initEditor();
+                            updateEditorUI();
                         };
                         cell.onpointerenter = () => {
                             if (isDrawing) {
                                 customMinos[i][r][c] = drawTargetState;
                                 saveMinosToStorage();
-                                initEditor();
+                                updateEditorUI();
                             }
                         };
 
                         grid.appendChild(cell);
+                        editorCells[i][r][c] = cell;
                     }
                 }
                 card.appendChild(grid);
@@ -420,10 +425,89 @@
                 errDiv.id = `error-msg-${i}`;
                 errDiv.className = 'text-[9px] text-pink-400 mt-1 h-3.5 text-center truncate w-full';
                 card.appendChild(errDiv);
+                errorMsgDivs[i] = errDiv;
 
                 editorContainer.appendChild(card);
             }
-            validateAllMinos();
+            updateEditorUI();
+        }
+
+        function updateEditorUI() {
+            let signatures = new Set();
+            allValid = true;
+
+            for (let i = 0; i < 7; i++) {
+                let count = 0;
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        const isActive = customMinos[i][r][c];
+                        if (isActive) count++;
+
+                        const cell = editorCells[i][r][c];
+                        if (cell) {
+                            if (isActive) {
+                                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border shadow-md scale-95';
+                                cell.style.backgroundColor = MINO_COLORS[i];
+                                cell.style.borderColor = '#ffffff';
+                                cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
+                            } else {
+                                cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border bg-slate-900 hover:bg-slate-800 border-slate-800/60';
+                                cell.style.backgroundColor = '#0f172a';
+                                cell.style.borderColor = '';
+                                cell.style.boxShadow = '';
+                            }
+                        }
+                    }
+                }
+
+                if (countBadges[i]) {
+                    countBadges[i].innerText = `目標: ${gameConfig.targetCounts[i]}マス`;
+                }
+
+                let msg = "";
+                let isValid = true;
+                const targetCount = gameConfig.targetCounts[i];
+
+                if (count !== targetCount) {
+                    msg = `要${targetCount}マス (現在${count})`;
+                    isValid = false;
+                } else if (!checkConnectivity(customMinos[i])) {
+                    msg = `ブロックが分断されています`;
+                    isValid = false;
+                } else if (!gameConfig.allowOverlap) {
+                    let sig = getCanonicalSignature(customMinos[i]);
+                    if (signatures.has(sig)) {
+                        msg = `他のミノと形状が重複`;
+                        isValid = false;
+                    } else {
+                        signatures.add(sig);
+                    }
+                }
+
+                if (errorMsgDivs[i]) {
+                    errorMsgDivs[i].innerText = msg;
+                }
+                const badge = countBadges[i];
+                if (badge) {
+                    if (isValid) {
+                        badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold";
+                    } else {
+                        badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-pink-950 border border-pink-500/50 text-pink-400 font-bold";
+                    }
+                }
+
+                if (!isValid) allValid = false;
+            }
+
+            if (allValid) {
+                validationDetails.innerHTML = `<span class="text-emerald-400 font-bold">✓ すべての条件をクリアしました！</span>`;
+                startGameBtn.disabled = false;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg neon-glow-cyan cursor-pointer";
+            } else {
+                validationDetails.innerHTML = `<span class="text-pink-400">✗ 指定されたマス数・連結・重複ルールを満たしてください。</span>`;
+                startGameBtn.disabled = true;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg";
+            }
         }
 
         window.addEventListener('pointerup', () => { isDrawing = false; });
@@ -505,61 +589,8 @@
             return count === coords.length;
         }
 
-        function validateAllMinos() {
-            let signatures = new Set();
-            allValid = true;
-
-            for (let i = 0; i < 7; i++) {
-                let count = 0;
-                for (let r = 0; r < 4; r++) {
-                    for (let c = 0; c < 4; c++) {
-                        if (customMinos[i][r][c]) count++;
-                    }
-                }
-
-                let msg = "";
-                let isValid = true;
-                const targetCount = gameConfig.targetCounts[i];
-
-                if (count !== targetCount) {
-                    msg = `要${targetCount}マス (現在${count})`;
-                    isValid = false;
-                } else if (!checkConnectivity(customMinos[i])) {
-                    msg = `ブロックが分断されています`;
-                    isValid = false;
-                } else if (!gameConfig.allowOverlap) {
-                    let sig = getCanonicalSignature(customMinos[i]);
-                    if (signatures.has(sig)) {
-                        msg = `他のミノと形状が重複`;
-                        isValid = false;
-                    } else {
-                        signatures.add(sig);
-                    }
-                }
-
-                document.getElementById(`error-msg-${i}`).innerText = msg;
-                const badge = document.getElementById(`count-badge-${i}`);
-                if (isValid) {
-                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold";
-                } else {
-                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-pink-950 border border-pink-500/50 text-pink-400 font-bold";
-                }
-
-                if (!isValid) allValid = false;
-            }
-
-            if (allValid) {
-                validationDetails.innerHTML = `<span class="text-emerald-400 font-bold">✓ すべての条件をクリアしました！</span>`;
-                startGameBtn.disabled = false;
-                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg neon-glow-cyan cursor-pointer";
-            } else {
-                validationDetails.innerHTML = `<span class="text-pink-400">✗ 指定されたマス数・連結・重複ルールを満たしてください。</span>`;
-                startGameBtn.disabled = true;
-                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg";
-            }
-        }
-
-        initEditor();
+        // 初期化実行
+        initEditorDOM();
 
         let gameStarted = false;
         const BOARD_WIDTH = 10;
@@ -611,9 +642,11 @@
             isStagingGarbage = false;
             clearLockDelay();
 
-            // BGMの再生開始
+            // BGMの再生開始（エラーハンドリング付き）
             sounds.bgm.currentTime = 0;
-            sounds.bgm.play().catch(e => {});
+            sounds.bgm.play().catch(e => {
+                console.warn("BGM再生ブロックまたはロードエラー:", e);
+            });
 
             refillBag();
             nextQueue = [];
@@ -721,7 +754,7 @@
                     currentX += k.x;
                     currentY += k.y;
                     currentPiece = rotated;
-                    playSE('rotate'); // 回転SE
+                    playSE('rotate');
                     resetLockDelayIfGrounded();
                     drawGame();
                     return;
@@ -733,7 +766,7 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX - 1, currentY, currentPiece)) {
                 currentX--;
-                playSE('move'); // 移動SE
+                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -743,7 +776,7 @@
             if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
             if (!checkCollision(currentX + 1, currentY, currentPiece)) {
                 currentX++;
-                playSE('move'); // 移動SE
+                playSE('move');
                 resetLockDelayIfGrounded();
                 drawGame();
             }
@@ -755,7 +788,7 @@
                 currentY++;
                 if (isSoft) {
                     score += 1;
-                    playSE('move'); // ソフトドロップ時の移動音
+                    playSE('move');
                 }
                 if (!checkCollision(currentX, currentY + 1, currentPiece)) {
                     clearLockDelay();
@@ -777,14 +810,14 @@
                 dropDist++;
             }
             score += dropDist * 2;
-            playSE('hard'); // ハードドロップSE (hard.mp3)
+            playSE('hard');
             lockPiece();
         }
 
         function holdPieceFunc() {
             if (!gameStarted || !canHold || isAnimatingClear || isStagingGarbage) return;
             clearLockDelay();
-            playSE('hold'); // ホールドSE
+            playSE('hold');
             if (holdPieceIndex === null) {
                 holdPieceIndex = currentMinoIndex;
                 spawnPiece();
@@ -827,7 +860,7 @@
 
             if (fullRows.length > 0) {
                 isAnimatingClear = true;
-                playSE('line'); // ライン消しSE
+                playSE('line');
                 drawGameWithFlash(fullRows, () => {
                     for (let r of fullRows) {
                         board.splice(r, 1);
@@ -855,7 +888,7 @@
                 dropInterval = Math.max(50, dropInterval / gameConfig.speedMultiplier);
                 restartDropTimer();
 
-                playSE('speedup'); // スピードアップSE
+                playSE('speedup');
                 const cutin = document.getElementById('speedup-cutin');
                 document.getElementById('speedup-sub').innerText = `VELOCITY ${(1000/dropInterval).toFixed(1)}x`;
                 cutin.classList.remove('hidden');
@@ -908,7 +941,7 @@
                 garbageRow[holeCol] = 0;
                 board.push(garbageRow);
 
-                playSE('obstacle'); // お邪魔ミノ1段生成ごとSE
+                playSE('obstacle');
                 drawGame();
                 currentRow++;
                 setTimeout(addSingleGarbage, 180);
