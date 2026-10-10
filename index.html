@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Custom Tetris</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #030712;
+            color: #f3f4f6;
+            overflow-x: hidden;
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .cyber-font {
+            font-family: 'Orbitron', sans-serif;
+        }
+        .neon-glow-cyan {
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.4), inset 0 0 8px rgba(6, 182, 212, 0.2);
+        }
+        .neon-text-cyan {
+            text-shadow: 0 0 10px rgba(6, 182, 212, 0.7);
+        }
+        .mino-grid {
+            touch-action: none;
+        }
+        @keyframes cutInAnim {
+            0% { transform: scale(0.2) rotate(-10deg); opacity: 0; }
+            50% { transform: scale(1.1) rotate(3deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .cut-in-effect {
+            animation: cutInAnim 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #030712;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-2 sm:p-4">
+
+    <!-- 設定モーダル -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-4 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                <h3 class="cyber-font text-sm font-bold text-cyan-400">GAME SETTINGS</h3>
+                <button id="close-settings-btn" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div class="flex items-center justify-between">
+                    <span class="text-slate-300">形状の重複を許可する</span>
+                    <input type="checkbox" id="setting-allow-overlap" class="w-4 h-4 accent-cyan-500 rounded bg-slate-950 border-slate-700">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-slate-400 block mb-1">初期スピード倍率</label>
+                        <input type="number" id="setting-initial-speed" step="0.1" min="0.2" max="5.0" value="1.0" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
+                    </div>
+                    <div>
+                        <label class="text-slate-400 block mb-1">加速倍率</label>
+                        <input type="number" id="setting-speed-mult" step="0.1" min="1.0" max="3.0" value="1.2" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-slate-400 block mb-1">加速までのミノ数</label>
+                        <input type="number" id="setting-speed-count" min="5" max="100" value="20" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
+                    </div>
+                    <div>
+                        <label class="text-slate-400 block mb-1">おじゃま生成ミノ数</label>
+                        <input type="number" id="setting-garbage-count" min="5" max="100" value="20" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-slate-400 block mb-1">おじゃまミノの段数 (1~5)</label>
+                    <input type="number" id="setting-garbage-rows" min="1" max="5" value="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
+                </div>
+                <div class="border-t border-slate-800 pt-2">
+                    <label class="text-cyan-300 cyber-font block mb-2 font-bold">各ミノの目標マス数 (1~16)</label>
+                    <div id="settings-target-counts" class="grid grid-cols-4 gap-2">
+                        <!-- 動的生成 -->
+                    </div>
+                </div>
+            </div>
+            <div class="flex space-x-2 pt-2">
+                <button id="reset-settings-btn" class="w-1/3 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold rounded-xl cyber-font text-xs shadow transition-all">初期値に戻す</button>
+                <button id="save-settings-btn" class="w-2/3 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl cyber-font text-xs shadow-lg transition-all">設定を適用して閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- エディター画面 -->
+    <div id="editor-screen" class="w-full max-w-md flex flex-col items-center space-y-3 py-1">
+        <header class="w-full flex justify-between items-center px-1">
+            <div>
+                <h1 class="cyber-font text-xl sm:text-2xl font-black text-cyan-400 neon-text-cyan tracking-wider">CUSTOM MINO STUDIO</h1>
+                <p class="text-[10px] sm:text-[11px] text-gray-400 mt-0.5">7種のミノの形をデザイン</p>
+            </div>
+            <div class="flex space-x-1.5">
+                <button id="reset-minos-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-pink-400 rounded-xl cyber-font text-xs flex items-center space-x-1 shadow transition-all">
+                    <span>🗑️ リセット</span>
+                </button>
+                <button id="open-settings-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 rounded-xl cyber-font text-xs flex items-center space-x-1 shadow transition-all">
+                    <span>⚙️ 設定</span>
+                </button>
+            </div>
+        </header>
+
+        <div id="minos-editor-container" class="w-full grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[58vh] overflow-y-auto p-1">
+            <!-- 7個の4x4グリッド -->
+        </div>
+
+        <div id="validation-summary" class="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-300 shadow-lg">
+            <div class="font-bold text-cyan-300 mb-0.5 cyber-font text-[10px]">SYSTEM STATUS:</div>
+            <div id="validation-details" class="space-y-0.5 text-[11px]">判定中...</div>
+        </div>
+
+        <button id="start-game-btn" disabled 
+            class="w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg">
+            全条件クリアでスタート
+        </button>
+    </div>
+
+    <!-- ゲーム画面 -->
+    <div id="game-screen" class="w-full max-w-md flex flex-col items-center space-y-2 hidden">
+        <div class="w-full flex justify-between items-center bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5 shadow-lg">
+            <div class="flex flex-col">
+                <span class="text-[9px] text-slate-400 cyber-font">SCORE</span>
+                <span id="score-val" class="cyber-font text-base font-bold text-cyan-400">0</span>
+            </div>
+            <div class="flex space-x-3 text-center">
+                <div>
+                    <div class="text-[8px] text-slate-400 cyber-font">PLACED</div>
+                    <div id="placed-val" class="cyber-font text-xs font-semibold text-pink-400">0</div>
+                </div>
+                <div>
+                    <div class="text-[8px] text-slate-400 cyber-font">LINES</div>
+                    <div id="lines-val" class="cyber-font text-xs font-semibold text-emerald-400">0</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-start justify-center space-x-2 w-full">
+            <div class="flex flex-col items-center space-y-1">
+                <span class="text-[9px] text-slate-400 cyber-font">HOLD</span>
+                <div class="w-14 h-14 bg-slate-900/90 border border-slate-800 rounded-lg flex items-center justify-center p-1 shadow-inner">
+                    <canvas id="hold-canvas" width="50" height="50" class="w-full h-full"></canvas>
+                </div>
+            </div>
+
+            <div class="relative bg-slate-950 border-2 border-cyan-500/40 rounded-xl neon-glow-cyan overflow-hidden">
+                <canvas id="tetris-canvas" width="180" height="360" class="block w-[160px] sm:w-[180px] h-[320px] sm:h-[360px]"></canvas>
+                
+                <div id="speedup-cutin" class="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center pointer-events-none hidden z-20">
+                    <div class="text-center">
+                        <div class="cyber-font text-xl sm:text-2xl font-black text-yellow-400 neon-text-cyan cut-in-effect">SPEED UP!</div>
+                        <div id="speedup-sub" class="text-xs text-cyan-300 cyber-font font-bold mt-1">VELOCITY x1.2</div>
+                    </div>
+                </div>
+
+                <div id="game-over-overlay" class="absolute inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 hidden z-30">
+                    <h2 class="cyber-font text-xl font-bold text-pink-500 mb-2 neon-text-cyan">GAME OVER</h2>
+                    <div class="text-xs text-slate-300 space-y-1 mb-4 text-center">
+                        <div>設置ミノ: <span id="res-placed" class="text-cyan-400 font-bold">0</span> × 50 = <span id="res-p-score" class="text-cyan-300 font-bold">0</span> pt</div>
+                        <div>ライン消去ボーナス: <span id="res-l-score" class="text-emerald-400 font-bold">0</span> pt</div>
+                        <div class="text-sm font-bold text-yellow-400 mt-2">合計スコア: <span id="res-total">0</span> pt</div>
+                    </div>
+                    <button onclick="location.reload()" class="py-2 px-6 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg cyber-font text-xs tracking-wider shadow-lg transition-all">
+                        もう一度挑戦
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex flex-col items-center space-y-0.5">
+                <span class="text-[9px] text-slate-400 cyber-font">NEXT (6)</span>
+                <div class="w-14 bg-slate-900/90 border border-slate-800 rounded-lg flex flex-col items-center p-1 space-y-1 shadow-inner">
+                    <div class="w-12 h-12 flex items-center justify-center border-b border-slate-800/60"><canvas id="next-canvas-0" width="44" height="44" class="w-full h-full"></canvas></div>
+                    <div class="w-12 h-12 flex items-center justify-center border-b border-slate-800/60"><canvas id="next-canvas-1" width="44" height="44" class="w-full h-full"></canvas></div>
+                    <div class="w-12 h-12 flex items-center justify-center border-b border-slate-800/60"><canvas id="next-canvas-2" width="44" height="44" class="w-full h-full"></canvas></div>
+                    <div class="w-12 h-12 flex items-center justify-center border-b border-slate-800/60"><canvas id="next-canvas-3" width="44" height="44" class="w-full h-full"></canvas></div>
+                    <div class="w-12 h-12 flex items-center justify-center border-b border-slate-800/60"><canvas id="next-canvas-4" width="44" height="44" class="w-full h-full"></canvas></div>
+                    <div class="w-12 h-12 flex items-center justify-center"><canvas id="next-canvas-5" width="44" height="44" class="w-full h-full"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="w-full flex justify-between text-[11px] px-2 text-slate-400 cyber-font">
+            <div>SPEED: <span id="speed-val" class="text-cyan-300 font-bold">1.0x</span></div>
+            <div>GARBAGE IN: <span id="obstacle-countdown" class="text-pink-400 font-bold">20</span></div>
+        </div>
+
+        <div id="game-controls" class="w-full flex flex-col space-y-2 pt-1">
+            <div class="grid grid-cols-4 gap-1.5">
+                <button id="btn-left" class="py-3 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 text-slate-200 font-bold rounded-xl text-base cyber-font transition-all shadow">←</button>
+                <button id="btn-right" class="py-3 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 text-slate-200 font-bold rounded-xl text-base cyber-font transition-all shadow">→</button>
+                <button id="btn-rot-left" class="py-3 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 text-slate-200 font-bold rounded-xl text-xs cyber-font transition-all shadow">↺</button>
+                <button id="btn-rot-right" class="py-3 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 text-slate-200 font-bold rounded-xl text-xs cyber-font transition-all shadow">↻</button>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5">
+                <button id="btn-hold" class="col-span-1 py-3 bg-cyan-950/80 hover:bg-cyan-900 active:bg-cyan-800 border border-cyan-500/50 text-cyan-300 font-bold rounded-xl text-sm cyber-font transition-all shadow neon-glow-cyan">HOLD</button>
+                <button id="btn-hard-drop" class="col-span-1 py-3 bg-cyan-900/60 hover:bg-cyan-800/80 active:bg-cyan-700 border border-cyan-500/50 text-cyan-300 font-bold rounded-xl text-xs cyber-font transition-all shadow">⇊ HARD</button>
+                <button id="btn-soft-drop" class="col-span-1 py-3 bg-slate-800/90 hover:bg-slate-700 active:bg-slate-600 border border-slate-700 text-slate-200 font-bold rounded-xl text-xs cyber-font transition-all shadow">↓ SOFT</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 音声アセットの定義
+        const sounds = {
+            bgm: new Audio('bgm.mp3'),
+            hold: new Audio('hold.mp3'),
+            rotate: new Audio('rotate.mp3'),
+            move: new Audio('move.mp3'),
+            line: new Audio('Line.mp3'),
+            button: new Audio('button.mp3'),
+            obstacle: new Audio('obstacle.mp3'),
+            speedup: new Audio('speedup.mp3'),
+            hard: new Audio('hard.mp3') // 追加
+        };
+
+        sounds.bgm.loop = true;
+        sounds.bgm.volume = 0.4;
+
+        function playSE(name) {
+            let s = sounds[name];
+            if (s) {
+                s.currentTime = 0;
+                s.play().catch(e => {});
+            }
+        }
+
+        const DEFAULT_CONFIG = {
+            targetCounts: [3, 3, 4, 4, 5, 6, 7],
+            allowOverlap: false,
+            initialSpeedMultiplier: 1.0,
+            speedMultiplier: 1.2,
+            speedUpIntervalCount: 20,
+            garbageIntervalCount: 20,
+            garbageRowsCount: 3
+        };
+
+        // LocalStorageからの読み込み（設定・ミノ形状）[cite: 4]
+        let gameConfig = (() => {
+            try {
+                let saved = localStorage.getItem('neon_tetris_config');
+                return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+            } catch(e) {
+                return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+            }
+        })();
+
+        let customMinos = (() => {
+            try {
+                let saved = localStorage.getItem('neon_tetris_minos');
+                return saved ? JSON.parse(saved) : Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4).fill(0)));
+            } catch(e) {
+                return Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4).fill(0)));
+            }
+        })();
+
+        function saveConfigToStorage() {
+            try { localStorage.setItem('neon_tetris_config', JSON.stringify(gameConfig)); } catch(e) {}
+        }
+
+        function saveMinosToStorage() {
+            try { localStorage.setItem('neon_tetris_minos', JSON.stringify(customMinos)); } catch(e) {}
+        }
+
+        const MINO_COLORS = ['#06b6d4', '#ec4899', '#facc15', '#10b981', '#f97316', '#3b82f6', '#a855f7'];
+
+        let isDrawing = false;
+        let drawTargetState = 1;
+        let allValid = false;
+
+        const editorContainer = document.getElementById('minos-editor-container');
+        const startGameBtn = document.getElementById('start-game-btn');
+        const validationDetails = document.getElementById('validation-details');
+
+        // 設定モーダル関連
+        const settingsModal = document.getElementById('settings-modal');
+        document.getElementById('open-settings-btn').onclick = () => {
+            playSE('button');
+            syncSettingsToUI();
+            settingsModal.classList.remove('hidden');
+        };
+        document.getElementById('close-settings-btn').onclick = () => {
+            playSE('button');
+            settingsModal.classList.add('hidden');
+        };
+        
+        document.getElementById('save-settings-btn').onclick = () => {
+            playSE('button');
+            syncUIToSettings();
+            saveConfigToStorage();
+            settingsModal.classList.add('hidden');
+            initEditor();
+        };
+
+        document.getElementById('reset-settings-btn').onclick = () => {
+            playSE('button');
+            gameConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+            saveConfigToStorage();
+            syncSettingsToUI();
+            initEditor();
+        };
+
+        // ミノリセットボタン
+        document.getElementById('reset-minos-btn').onclick = () => {
+            playSE('button');
+            if (confirm('描いたミノをすべてリセットしてまっさらにしますか？')) {
+                customMinos = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => Array(4).fill(0)));
+                saveMinosToStorage();
+                initEditor();
+            }
+        };
+
+        function syncSettingsToUI() {
+            document.getElementById('setting-allow-overlap').checked = gameConfig.allowOverlap;
+            document.getElementById('setting-initial-speed').value = gameConfig.initialSpeedMultiplier;
+            document.getElementById('setting-speed-mult').value = gameConfig.speedMultiplier;
+            document.getElementById('setting-speed-count').value = gameConfig.speedUpIntervalCount;
+            document.getElementById('setting-garbage-count').value = gameConfig.garbageIntervalCount;
+            document.getElementById('setting-garbage-rows').value = gameConfig.garbageRowsCount;
+
+            const targetsDiv = document.getElementById('settings-target-counts');
+            targetsDiv.innerHTML = '';
+            for (let i = 0; i < 7; i++) {
+                targetsDiv.innerHTML += `
+                    <div>
+                        <label class="text-[10px] text-slate-400 block">Mino #${i+1}</label>
+                        <input type="number" min="1" max="16" value="${gameConfig.targetCounts[i]}" id="target-input-${i}" class="w-full bg-slate-950 border border-slate-800 rounded p-1 text-cyan-300 font-bold cyber-font text-center">
+                    </div>
+                `;
+            }
+        }
+
+        function syncUIToSettings() {
+            gameConfig.allowOverlap = document.getElementById('setting-allow-overlap').checked;
+            gameConfig.initialSpeedMultiplier = parseFloat(document.getElementById('setting-initial-speed').value) || 1.0;
+            gameConfig.speedMultiplier = parseFloat(document.getElementById('setting-speed-mult').value) || 1.2;
+            gameConfig.speedUpIntervalCount = parseInt(document.getElementById('setting-speed-count').value) || 20;
+            gameConfig.garbageIntervalCount = parseInt(document.getElementById('setting-garbage-count').value) || 20;
+            gameConfig.garbageRowsCount = parseInt(document.getElementById('setting-garbage-rows').value) || 3;
+
+            for (let i = 0; i < 7; i++) {
+                let val = parseInt(document.getElementById(`target-input-${i}`).value);
+                if (!isNaN(val) && val >= 1 && val <= 16) {
+                    gameConfig.targetCounts[i] = val;
+                }
+            }
+        }
+
+        function initEditor() {
+            editorContainer.innerHTML = '';
+            for (let i = 0; i < 7; i++) {
+                const card = document.createElement('div');
+                card.className = 'bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 flex flex-col items-center shadow-md';
+                
+                const header = document.createElement('div');
+                header.className = 'w-full flex justify-between items-center mb-1.5';
+                header.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <div class="w-4 h-4 rounded-full border border-white/40 shadow" style="background-color: ${MINO_COLORS[i]};"></div>
+                        <span class="cyber-font text-xs font-bold text-cyan-400">MINO #${i+1}</span>
+                    </div>
+                    <span id="count-badge-${i}" class="text-[9px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">目標: ${gameConfig.targetCounts[i]}マス</span>
+                `;
+                card.appendChild(header);
+
+                const grid = document.createElement('div');
+                grid.className = 'mino-grid grid grid-cols-4 gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800';
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        const cell = document.createElement('div');
+                        const isActive = customMinos[i][r][c];
+                        cell.className = 'w-7 h-7 sm:w-8 sm:h-8 rounded transition-all duration-150 cursor-pointer flex items-center justify-center border ' + 
+                            (isActive ? 'shadow-md scale-95' : 'bg-slate-900 hover:bg-slate-800 border-slate-800/60');
+                        
+                        if (isActive) {
+                            cell.style.backgroundColor = MINO_COLORS[i];
+                            cell.style.borderColor = '#ffffff';
+                            cell.style.boxShadow = `0 0 8px ${MINO_COLORS[i]}`;
+                        } else {
+                            cell.style.backgroundColor = '#0f172a';
+                        }
+                        
+                        cell.onpointerdown = (e) => {
+                            e.preventDefault();
+                            isDrawing = true;
+                            drawTargetState = customMinos[i][r][c] ? 0 : 1;
+                            customMinos[i][r][c] = drawTargetState;
+                            saveMinosToStorage();
+                            initEditor();
+                        };
+                        cell.onpointerenter = () => {
+                            if (isDrawing) {
+                                customMinos[i][r][c] = drawTargetState;
+                                saveMinosToStorage();
+                                initEditor();
+                            }
+                        };
+
+                        grid.appendChild(cell);
+                    }
+                }
+                card.appendChild(grid);
+
+                const errDiv = document.createElement('div');
+                errDiv.id = `error-msg-${i}`;
+                errDiv.className = 'text-[9px] text-pink-400 mt-1 h-3.5 text-center truncate w-full';
+                card.appendChild(errDiv);
+
+                editorContainer.appendChild(card);
+            }
+            validateAllMinos();
+        }
+
+        window.addEventListener('pointerup', () => { isDrawing = false; });
+
+        function getCanonicalSignature(matrix) {
+            let coords = [];
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (matrix[r][c]) coords.push({r, c});
+                }
+            }
+            if (coords.length === 0) return "";
+
+            let canonicalStr = null;
+            let currentMat = matrix.map(row => [...row]);
+            
+            for (let rot = 0; rot < 4; rot++) {
+                let minR = 4, maxR = -1, minC = 4, maxC = -1;
+                let rotatedCoords = [];
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        if (currentMat[r][c]) {
+                            rotatedCoords.push({r, c});
+                            if (r < minR) minR = r;
+                            if (r > maxR) maxR = r;
+                            if (c < minC) minC = c;
+                            if (c > maxC) maxC = c;
+                        }
+                    }
+                }
+
+                let normalized = rotatedCoords.map(pt => `${pt.r - minR},${pt.c - minC}`);
+                normalized.sort();
+                let sig = normalized.join(';');
+
+                if (canonicalStr === null || sig < canonicalStr) {
+                    canonicalStr = sig;
+                }
+
+                let nextMat = Array.from({ length: 4 }, () => Array(4).fill(0));
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        if (currentMat[r][c]) {
+                            nextMat[c][3 - r] = 1;
+                        }
+                    }
+                }
+                currentMat = nextMat;
+            }
+            return canonicalStr;
+        }
+
+        function checkConnectivity(matrix) {
+            let coords = [];
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (matrix[r][c]) coords.push({r, c});
+                }
+            }
+            if (coords.length === 0) return false;
+
+            let visited = Array.from({ length: 4 }, () => Array(4).fill(false));
+            let queue = [coords[0]];
+            visited[coords[0].r][coords[0].c] = true;
+            let count = 0;
+
+            while (queue.length > 0) {
+                let {r, c} = queue.shift();
+                count++;
+                const dirs = [{r:-1, c:0}, {r:1, c:0}, {r:0, c:-1}, {r:0, c:1}];
+                for (let d of dirs) {
+                    let nr = r + d.r, nc = c + d.c;
+                    if (nr >= 0 && nr < 4 && nc >= 0 && nc < 4 && matrix[nr][nc] && !visited[nr][nc]) {
+                        visited[nr][nc] = true;
+                        queue.push({r: nr, c: nc});
+                    }
+                }
+            }
+            return count === coords.length;
+        }
+
+        function validateAllMinos() {
+            let signatures = new Set();
+            allValid = true;
+
+            for (let i = 0; i < 7; i++) {
+                let count = 0;
+                for (let r = 0; r < 4; r++) {
+                    for (let c = 0; c < 4; c++) {
+                        if (customMinos[i][r][c]) count++;
+                    }
+                }
+
+                let msg = "";
+                let isValid = true;
+                const targetCount = gameConfig.targetCounts[i];
+
+                if (count !== targetCount) {
+                    msg = `要${targetCount}マス (現在${count})`;
+                    isValid = false;
+                } else if (!checkConnectivity(customMinos[i])) {
+                    msg = `ブロックが分断されています`;
+                    isValid = false;
+                } else if (!gameConfig.allowOverlap) {
+                    let sig = getCanonicalSignature(customMinos[i]);
+                    if (signatures.has(sig)) {
+                        msg = `他のミノと形状が重複`;
+                        isValid = false;
+                    } else {
+                        signatures.add(sig);
+                    }
+                }
+
+                document.getElementById(`error-msg-${i}`).innerText = msg;
+                const badge = document.getElementById(`count-badge-${i}`);
+                if (isValid) {
+                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/50 text-emerald-400 font-bold";
+                } else {
+                    badge.className = "text-[9px] px-2 py-0.5 rounded-full bg-pink-950 border border-pink-500/50 text-pink-400 font-bold";
+                }
+
+                if (!isValid) allValid = false;
+            }
+
+            if (allValid) {
+                validationDetails.innerHTML = `<span class="text-emerald-400 font-bold">✓ すべての条件をクリアしました！</span>`;
+                startGameBtn.disabled = false;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg neon-glow-cyan cursor-pointer";
+            } else {
+                validationDetails.innerHTML = `<span class="text-pink-400">✗ 指定されたマス数・連結・重複ルールを満たしてください。</span>`;
+                startGameBtn.disabled = true;
+                startGameBtn.className = "w-full py-3 px-6 rounded-xl cyber-font font-bold text-sm tracking-wider uppercase transition-all duration-300 bg-slate-800 text-slate-500 cursor-not-allowed shadow-lg";
+            }
+        }
+
+        initEditor();
+
+        let gameStarted = false;
+        const BOARD_WIDTH = 10;
+        const BOARD_HEIGHT = 20;
+        let board = Array.from({ length: BOARD_HEIGHT }, () => Array(BOARD_WIDTH).fill(0));
+
+        let currentPiece = null;
+        let currentX = 3;
+        let currentY = 0;
+        let currentMinoIndex = 0;
+        let holdPieceIndex = null;
+        let canHold = true;
+
+        let bag = [];
+        let nextQueue = []; 
+
+        let score = 0;
+        let placedCount = 0;
+        let clearedLinesTotal = 0;
+        let clearedLinesScoreTotal = 0;
+        let dropInterval = 1000;
+        let dropTimer = null;
+        let isAnimatingClear = false;
+        let isStagingGarbage = false;
+
+        let isLockDelaying = false;
+        let lockDelayTimeout = null;
+        const LOCK_DELAY_TIME = 1000;
+
+        startGameBtn.onclick = () => {
+            if (!allValid) return;
+            playSE('button');
+            document.getElementById('editor-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            initGame();
+        };
+
+        function initGame() {
+            gameStarted = true;
+            board = Array.from({ length: BOARD_HEIGHT }, () => Array(BOARD_WIDTH).fill(0));
+            score = 0;
+            placedCount = 0;
+            clearedLinesTotal = 0;
+            clearedLinesScoreTotal = 0;
+            dropInterval = 1000 / gameConfig.initialSpeedMultiplier;
+            holdPieceIndex = null;
+            canHold = true;
+            isAnimatingClear = false;
+            isStagingGarbage = false;
+            clearLockDelay();
+
+            // BGMの再生開始
+            sounds.bgm.currentTime = 0;
+            sounds.bgm.play().catch(e => {});
+
+            refillBag();
+            nextQueue = [];
+            for (let i = 0; i < 6; i++) {
+                nextQueue.push(pullBag());
+            }
+            spawnPiece();
+            updateUIStats();
+            startDropTimer();
+            drawGame();
+        }
+
+        function refillBag() {
+            bag = [0, 1, 2, 3, 4, 5, 6];
+            for (let i = bag.length - 1; i > 0; i--) {
+                let j = Math.floor(Math.random() * (i + 1));
+                [bag[i], bag[j]] = [bag[j], bag[i]];
+            }
+        }
+
+        function pullBag() {
+            if (bag.length === 0) refillBag();
+            return bag.pop();
+        }
+
+        function spawnPiece() {
+            clearLockDelay();
+            currentMinoIndex = nextQueue.shift();
+            nextQueue.push(pullBag());
+            currentPiece = customMinos[currentMinoIndex].map(row => [...row]);
+            currentX = Math.floor((BOARD_WIDTH - 4) / 2);
+            currentY = 0;
+            canHold = true;
+
+            if (checkCollision(currentX, currentY, currentPiece)) {
+                gameOver();
+            }
+        }
+
+        function checkCollision(nx, ny, piece) {
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (piece[r][c]) {
+                        let boardX = nx + c;
+                        let boardY = ny + r;
+                        if (boardX < 0 || boardX >= BOARD_WIDTH || boardY >= BOARD_HEIGHT) {
+                            return true;
+                        }
+                        if (boardY >= 0 && board[boardY][boardX] !== 0) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        function rotatePiece(piece, direction) {
+            let newPiece = Array.from({ length: 4 }, () => Array(4).fill(0));
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (piece[r][c]) {
+                        if (direction === 'right') {
+                            newPiece[c][3 - r] = 1;
+                        } else {
+                            newPiece[3 - c][r] = 1;
+                        }
+                    }
+                }
+            }
+            return newPiece;
+        }
+
+        function clearLockDelay() {
+            if (lockDelayTimeout) {
+                clearTimeout(lockDelayTimeout);
+                lockDelayTimeout = null;
+            }
+            isLockDelaying = false;
+        }
+
+        function triggerLockDelay() {
+            if (isLockDelaying) return;
+            isLockDelaying = true;
+            lockDelayTimeout = setTimeout(() => {
+                if (gameStarted && !isAnimatingClear && !isStagingGarbage) {
+                    lockPiece();
+                }
+            }, LOCK_DELAY_TIME);
+        }
+
+        function resetLockDelayIfGrounded() {
+            if (checkCollision(currentX, currentY + 1, currentPiece)) {
+                clearLockDelay();
+                triggerLockDelay();
+            }
+        }
+
+        function tryRotate(direction) {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            let rotated = rotatePiece(currentPiece, direction);
+            let kicks = [{x:0, y:0}, {x:-1, y:0}, {x:1, y:0}, {x:0, y:-1}, {x:-2, y:0}, {x:2, y:0}];
+            for (let k of kicks) {
+                if (!checkCollision(currentX + k.x, currentY + k.y, rotated)) {
+                    currentX += k.x;
+                    currentY += k.y;
+                    currentPiece = rotated;
+                    playSE('rotate'); // 回転SE
+                    resetLockDelayIfGrounded();
+                    drawGame();
+                    return;
+                }
+            }
+        }
+
+        function moveLeft() {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            if (!checkCollision(currentX - 1, currentY, currentPiece)) {
+                currentX--;
+                playSE('move'); // 移動SE
+                resetLockDelayIfGrounded();
+                drawGame();
+            }
+        }
+
+        function moveRight() {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            if (!checkCollision(currentX + 1, currentY, currentPiece)) {
+                currentX++;
+                playSE('move'); // 移動SE
+                resetLockDelayIfGrounded();
+                drawGame();
+            }
+        }
+
+        function autoOrSoftDrop(isSoft) {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            if (!checkCollision(currentX, currentY + 1, currentPiece)) {
+                currentY++;
+                if (isSoft) {
+                    score += 1;
+                    playSE('move'); // ソフトドロップ時の移動音
+                }
+                if (!checkCollision(currentX, currentY + 1, currentPiece)) {
+                    clearLockDelay();
+                } else {
+                    triggerLockDelay();
+                }
+                drawGame();
+            } else {
+                triggerLockDelay();
+            }
+        }
+
+        function hardDrop() {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            clearLockDelay();
+            let dropDist = 0;
+            while (!checkCollision(currentX, currentY + 1, currentPiece)) {
+                currentY++;
+                dropDist++;
+            }
+            score += dropDist * 2;
+            playSE('hard'); // ハードドロップSE (hard.mp3)
+            lockPiece();
+        }
+
+        function holdPieceFunc() {
+            if (!gameStarted || !canHold || isAnimatingClear || isStagingGarbage) return;
+            clearLockDelay();
+            playSE('hold'); // ホールドSE
+            if (holdPieceIndex === null) {
+                holdPieceIndex = currentMinoIndex;
+                spawnPiece();
+            } else {
+                let temp = holdPieceIndex;
+                holdPieceIndex = currentMinoIndex;
+                currentMinoIndex = temp;
+                currentPiece = customMinos[currentMinoIndex].map(row => [...row]);
+                currentX = Math.floor((BOARD_WIDTH - 4) / 2);
+                currentY = 0;
+            }
+            canHold = false;
+            drawGame();
+        }
+
+        function lockPiece() {
+            if (!gameStarted) return;
+            clearLockDelay();
+
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (currentPiece[r][c]) {
+                        let bx = currentX + c;
+                        let by = currentY + r;
+                        if (by >= 0 && by < BOARD_HEIGHT && bx >= 0 && bx < BOARD_WIDTH) {
+                            board[by][bx] = currentMinoIndex + 1;
+                        }
+                    }
+                }
+            }
+
+            placedCount++;
+
+            let fullRows = [];
+            for (let r = 0; r < BOARD_HEIGHT; r++) {
+                if (board[r].every(cell => cell !== 0)) {
+                    fullRows.push(r);
+                }
+            }
+
+            if (fullRows.length > 0) {
+                isAnimatingClear = true;
+                playSE('line'); // ライン消しSE
+                drawGameWithFlash(fullRows, () => {
+                    for (let r of fullRows) {
+                        board.splice(r, 1);
+                        board.unshift(Array(BOARD_WIDTH).fill(0));
+                    }
+                    clearedLinesTotal += fullRows.length;
+                    clearedLinesScoreTotal += fullRows.length * 200;
+                    finalizeLockSequence();
+                });
+            } else {
+                finalizeLockSequence();
+            }
+        }
+
+        function finalizeLockSequence() {
+            if (!gameStarted) return;
+            isAnimatingClear = false;
+            score = (placedCount * 50) + clearedLinesScoreTotal;
+            updateUIStats();
+
+            let shouldSpeedUp = placedCount > 0 && placedCount % gameConfig.speedUpIntervalCount === 0;
+            let shouldGarbage = placedCount > 0 && placedCount % gameConfig.garbageIntervalCount === 0;
+
+            if (shouldSpeedUp) {
+                dropInterval = Math.max(50, dropInterval / gameConfig.speedMultiplier);
+                restartDropTimer();
+
+                playSE('speedup'); // スピードアップSE
+                const cutin = document.getElementById('speedup-cutin');
+                document.getElementById('speedup-sub').innerText = `VELOCITY ${(1000/dropInterval).toFixed(1)}x`;
+                cutin.classList.remove('hidden');
+
+                setTimeout(() => {
+                    cutin.classList.add('hidden');
+                    if (!gameStarted) return;
+                    if (shouldGarbage) {
+                        triggerGarbageRows();
+                    } else {
+                        isAnimatingClear = false;
+                        isStagingGarbage = false;
+                        spawnPiece();
+                        drawGame();
+                    }
+                }, 900);
+            } else if (shouldGarbage) {
+                triggerGarbageRows();
+            } else {
+                isAnimatingClear = false;
+                isStagingGarbage = false;
+                spawnPiece();
+                drawGame();
+            }
+        }
+
+        function triggerGarbageRows() {
+            isStagingGarbage = true;
+            let numRows = gameConfig.garbageRowsCount;
+            let holeCol = Math.floor(Math.random() * BOARD_WIDTH);
+
+            let currentRow = 0;
+            function addSingleGarbage() {
+                if (currentRow >= numRows) {
+                    setTimeout(() => {
+                        if (!gameStarted) return;
+                        isStagingGarbage = false;
+                        spawnPiece();
+                        drawGame();
+                    }, 150);
+                    return;
+                }
+
+                if (board[0].some(cell => cell !== 0)) {
+                    gameOver();
+                    return;
+                }
+                board.shift();
+                let garbageRow = Array(BOARD_WIDTH).fill(8);
+                garbageRow[holeCol] = 0;
+                board.push(garbageRow);
+
+                playSE('obstacle'); // お邪魔ミノ1段生成ごとSE
+                drawGame();
+                currentRow++;
+                setTimeout(addSingleGarbage, 180);
+            }
+
+            addSingleGarbage();
+        }
+
+        function startDropTimer() {
+            if (dropTimer) clearInterval(dropTimer);
+            dropTimer = setInterval(() => {
+                if (gameStarted && !isAnimatingClear && !isStagingGarbage) {
+                    autoOrSoftDrop(false);
+                }
+            }, dropInterval);
+        }
+
+        function restartDropTimer() {
+            startDropTimer();
+        }
+
+        function gameOver() {
+            gameStarted = false;
+            isAnimatingClear = false;
+            isStagingGarbage = false;
+            clearLockDelay();
+            if (dropTimer) clearInterval(dropTimer);
+            if (softDropInterval) clearInterval(softDropInterval);
+            if (kbSoftDropInterval) clearInterval(kbSoftDropInterval);
+            
+            // BGMの停止
+            sounds.bgm.pause();
+            sounds.bgm.currentTime = 0;
+
+            document.getElementById('game-controls').classList.add('hidden');
+
+            document.getElementById('res-placed').innerText = placedCount;
+            document.getElementById('res-p-score').innerText = placedCount * 50;
+            document.getElementById('res-l-score').innerText = clearedLinesScoreTotal;
+            document.getElementById('res-total').innerText = score;
+            document.getElementById('game-over-overlay').classList.remove('hidden');
+        }
+
+        function updateUIStats() {
+            document.getElementById('score-val').innerText = score;
+            document.getElementById('placed-val').innerText = placedCount;
+            document.getElementById('lines-val').innerText = clearedLinesTotal;
+            document.getElementById('speed-val').innerText = (1000 / dropInterval).toFixed(1) + 'x';
+            let nextGarbage = gameConfig.garbageIntervalCount - (placedCount % gameConfig.garbageIntervalCount);
+            document.getElementById('obstacle-countdown').innerText = nextGarbage;
+        }
+
+        const canvas = document.getElementById('tetris-canvas');
+        const ctx = canvas.getContext('2d');
+        const holdCanvas = document.getElementById('hold-canvas');
+        const holdCtx = holdCanvas.getContext('2d');
+        const BLOCK_SIZE = 18;
+
+        function drawGame() {
+            ctx.fillStyle = '#030712';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 0.5;
+            for (let r = 0; r < BOARD_HEIGHT; r++) {
+                for (let c = 0; c < BOARD_WIDTH; c++) {
+                    ctx.strokeRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                }
+            }
+
+            for (let r = 0; r < BOARD_HEIGHT; r++) {
+                for (let c = 0; c < BOARD_WIDTH; c++) {
+                    if (board[r][c]) {
+                        let id = board[r][c];
+                        if (id === 8) {
+                            ctx.fillStyle = '#64748b';
+                        } else {
+                            ctx.fillStyle = MINO_COLORS[id - 1];
+                        }
+                        ctx.fillRect(c * BLOCK_SIZE + 1, r * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+                    }
+                }
+            }
+
+            if (!gameStarted || !currentPiece || isAnimatingClear) {
+                drawMiniPreviews();
+                return;
+            }
+
+            let ghostY = currentY;
+            while (!checkCollision(currentX, ghostY + 1, currentPiece)) {
+                ghostY++;
+            }
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (currentPiece[r][c]) {
+                        let bx = currentX + c;
+                        let by = ghostY + r;
+                        if (by >= 0) {
+                            ctx.fillRect(bx * BLOCK_SIZE + 1, by * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+                        }
+                    }
+                }
+            }
+
+            ctx.fillStyle = MINO_COLORS[currentMinoIndex];
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (currentPiece[r][c]) {
+                        let bx = currentX + c;
+                        let by = currentY + r;
+                        if (by >= 0) {
+                            ctx.fillRect(bx * BLOCK_SIZE + 1, by * BLOCK_SIZE + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+                        }
+                    }
+                }
+            }
+
+            drawMiniPreviews();
+        }
+
+        function drawGameWithFlash(fullRows, callback) {
+            drawGame();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            for (let r of fullRows) {
+                ctx.fillRect(0, r * BLOCK_SIZE, BOARD_WIDTH * BLOCK_SIZE, BLOCK_SIZE);
+            }
+            setTimeout(() => {
+                callback();
+            }, 220);
+        }
+
+        function drawMiniPreviews() {
+            drawMiniPreview(holdCtx, holdPieceIndex, 50);
+            for (let i = 0; i < 6; i++) {
+                const nCtx = document.getElementById(`next-canvas-${i}`).getContext('2d');
+                drawMiniPreview(nCtx, nextQueue[i], 44);
+            }
+        }
+
+        function drawMiniPreview(targetCtx, minoIdx, sizePx) {
+            targetCtx.fillStyle = '#030712';
+            targetCtx.fillRect(0, 0, sizePx, sizePx);
+
+            if (minoIdx === null || minoIdx === undefined) return;
+
+            let piece = customMinos[minoIdx];
+            let cellSize = sizePx === 50 ? 10 : 9;
+            
+            let minR = 4, maxR = -1, minC = 4, maxC = -1;
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (piece[r][c]) {
+                        if (r < minR) minR = r;
+                        if (r > maxR) maxR = r;
+                        if (c < minC) minC = c;
+                        if (c > maxC) maxC = c;
+                    }
+                }
+            }
+            let w = (maxC - minC + 1) * cellSize;
+            let h = (maxR - minR + 1) * cellSize;
+            let offsetX = (sizePx - w) / 2 - minC * cellSize;
+            let offsetY = (sizePx - h) / 2 - minR * cellSize;
+
+            targetCtx.fillStyle = MINO_COLORS[minoIdx];
+            for (let r = 0; r < 4; r++) {
+                for (let c = 0; c < 4; c++) {
+                    if (piece[r][c]) {
+                        targetCtx.fillRect(c * cellSize + offsetX, r * cellSize + offsetY, cellSize - 1, cellSize - 1);
+                    }
+                }
+            }
+        }
+
+        document.getElementById('btn-left').onclick = moveLeft;
+        document.getElementById('btn-right').onclick = moveRight;
+        document.getElementById('btn-rot-left').onclick = () => tryRotate('left');
+        document.getElementById('btn-rot-right').onclick = () => tryRotate('right');
+        document.getElementById('btn-hard-drop').onclick = hardDrop;
+        document.getElementById('btn-hold').onclick = holdPieceFunc;
+
+        let softDropInterval = null;
+        const softDropBtn = document.getElementById('btn-soft-drop');
+
+        softDropBtn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            autoOrSoftDrop(true);
+            if (!softDropInterval) {
+                softDropInterval = setInterval(() => {
+                    if (!gameStarted || isAnimatingClear || isStagingGarbage) {
+                        clearInterval(softDropInterval);
+                        softDropInterval = null;
+                        return;
+                    }
+                    autoOrSoftDrop(true);
+                }, 70);
+            }
+        });
+
+        const stopSoftDrop = () => {
+            if (softDropInterval) {
+                clearInterval(softDropInterval);
+                softDropInterval = null;
+            }
+        };
+        softDropBtn.addEventListener('pointerup', stopSoftDrop);
+        softDropBtn.addEventListener('pointerleave', stopSoftDrop);
+        softDropBtn.addEventListener('pointercancel', stopSoftDrop);
+
+        let kbSoftDropInterval = null;
+        window.addEventListener('keydown', (e) => {
+            if (!gameStarted || isAnimatingClear || isStagingGarbage) return;
+            if (e.key === 'ArrowLeft') moveLeft();
+            else if (e.key === 'ArrowRight') moveRight();
+            else if (e.key === 'ArrowDown') {
+                if (!kbSoftDropInterval) {
+                    autoOrSoftDrop(true);
+                    kbSoftDropInterval = setInterval(() => {
+                        if (!gameStarted || isAnimatingClear || isStagingGarbage) {
+                            clearInterval(kbSoftDropInterval);
+                            kbSoftDropInterval = null;
+                            return;
+                        }
+                        autoOrSoftDrop(true);
+                    }, 70);
+                }
+            }
+            else if (e.key === 'ArrowUp') hardDrop();
+            else if (e.key === 'z' || e.key === 'Z') tryRotate('left');
+            else if (e.key === 'x' || e.key === 'X') tryRotate('right');
+            else if (e.key === 'c' || e.key === 'C' || e.key === 'Shift') holdPieceFunc();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowDown' && kbSoftDropInterval) {
+                clearInterval(kbSoftDropInterval);
+                kbSoftDropInterval = null;
+            }
+        });
+    </script>
+</body>
+</html>
