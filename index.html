@@ -100,6 +100,16 @@
                     <label class="text-slate-400 block mb-1">おじゃまミノの段数 (1~5)</label>
                     <input type="number" id="setting-garbage-rows" min="1" max="5" value="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-cyan-300 font-bold cyber-font">
                 </div>
+                <div class="border-t border-slate-800 pt-3 space-y-3">
+                    <div>
+                        <div class="flex justify-between items-center mb-1"><label for="setting-bgm-volume" class="text-slate-300">BGM音量</label><span id="setting-bgm-volume-value" class="text-cyan-300 cyber-font font-bold">40%</span></div>
+                        <input type="range" id="setting-bgm-volume" min="0" max="100" value="40" step="1" class="w-full accent-cyan-500">
+                    </div>
+                    <div>
+                        <div class="flex justify-between items-center mb-1"><label for="setting-se-volume" class="text-slate-300">効果音音量</label><span id="setting-se-volume-value" class="text-cyan-300 cyber-font font-bold">100%</span></div>
+                        <input type="range" id="setting-se-volume" min="0" max="100" value="100" step="1" class="w-full accent-cyan-500">
+                    </div>
+                </div>
                 <div class="border-t border-slate-800 pt-2">
                     <label class="text-cyan-300 cyber-font block mb-2 font-bold">各ミノの目標マス数 (1~16)</label>
                     <div id="settings-target-counts" class="grid grid-cols-4 gap-2">
@@ -111,6 +121,18 @@
                 <button id="reset-settings-btn" class="w-1/3 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold rounded-xl cyber-font text-xs shadow transition-all">初期値に戻す</button>
                 <button id="save-settings-btn" class="w-2/3 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl cyber-font text-xs shadow-lg transition-all">設定を適用して閉じる</button>
             </div>
+        </div>
+    </div>
+
+    <!-- ゲーム説明モーダル -->
+    <div id="howto-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden p-4">
+        <div class="bg-slate-900 border border-cyan-500/40 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-2"><h2 class="cyber-font text-sm font-bold text-cyan-400">HOW TO PLAY</h2><button id="close-howto-btn" class="text-slate-400 hover:text-white text-lg font-bold px-2" aria-label="説明を閉じる">✕</button></div>
+            <p class="text-sm text-slate-200 leading-relaxed">このゲームは、プレイヤー自身がテトリミノの形を描いて遊ぶテトリスです。</p>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2"><h3 class="font-bold text-cyan-300 text-sm">遊び方</h3><p class="text-xs text-slate-300 leading-relaxed">最初の画面で7種類のミノをデザインします。指定されたマス数などの条件をすべて満たすと、ゲームを開始できます。ミノを操作してブロックを積み、横一列をそろえて消しましょう。</p></div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2"><h3 class="font-bold text-cyan-300 text-sm">ゲームのルールについて</h3><p class="text-xs text-slate-300 leading-relaxed">一定個数以上テトリミノを置くと、お邪魔ミノが生成され、ミノの落下速度が上がります。</p></div>
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2"><h3 class="font-bold text-emerald-300 text-sm">スコアの計算</h3><p class="text-xs text-slate-300 leading-relaxed">スコアは「設置したミノの数」と「消した列の数」で決まります。</p><p class="text-sm text-center text-yellow-300 font-bold">スコア = 設置ミノ数 × 50 + 消去ライン数 × 500</p><p class="text-[11px] text-slate-400 leading-relaxed">ミノを1個置くごとに50点、横一列を消すごとに500点が加算されます。</p></div>
+            <button id="howto-ok-btn" class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl text-sm">閉じる</button>
         </div>
     </div>
 
@@ -128,6 +150,7 @@
                 <button id="open-settings-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 rounded-xl cyber-font text-xs flex items-center space-x-1 shadow transition-all">
                     <span>⚙️ 設定</span>
                 </button>
+                <button id="open-howto-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 rounded-xl cyber-font text-xs flex items-center space-x-1 shadow transition-all"><span>📖 説明</span></button>
             </div>
         </header>
 
@@ -258,6 +281,22 @@
         sounds.bgm.loop = true;
         sounds.bgm.volume = 0.4;
         sounds.bgm.preload = 'auto';
+        let bgmVolume = 0.4;
+        let seVolume = 1;
+        try {
+            const savedAudioSettings = JSON.parse(localStorage.getItem('neon_tetris_audio') || '{}');
+            if (Number.isFinite(savedAudioSettings.bgmVolume)) bgmVolume = Math.max(0, Math.min(1, savedAudioSettings.bgmVolume));
+            if (Number.isFinite(savedAudioSettings.seVolume)) seVolume = Math.max(0, Math.min(1, savedAudioSettings.seVolume));
+        } catch (e) {}
+        sounds.bgm.volume = bgmVolume;
+        function applySEVolume() {
+            if (seMasterGain) seMasterGain.gain.value = seVolume;
+            for (const name of Object.keys(SOUND_FILES)) if (name !== 'bgm' && sounds[name]) sounds[name].volume = seVolume;
+        }
+        function saveAudioSettings() {
+            try { localStorage.setItem('neon_tetris_audio', JSON.stringify({ bgmVolume, seVolume })); } catch (e) {}
+        }
+        for (const name of Object.keys(SOUND_FILES)) if (name !== 'bgm' && sounds[name]) sounds[name].volume = seVolume;
         sounds.bgm.playsInline = true;
 
         let audioContext = null;
@@ -280,7 +319,7 @@
                     catch (e2) { return null; }
                 }
                 seMasterGain = audioContext.createGain();
-                seMasterGain.gain.value = 1;
+                seMasterGain.gain.value = seVolume;
                 seMasterGain.connect(audioContext.destination);
             }
             return audioContext;
@@ -554,6 +593,31 @@
 
         // 設定モーダル関連
         const settingsModal = document.getElementById('settings-modal');
+        const bgmVolumeInput = document.getElementById('setting-bgm-volume');
+        const seVolumeInput = document.getElementById('setting-se-volume');
+        function syncAudioSettingsToUI() {
+            bgmVolumeInput.value = Math.round(bgmVolume * 100);
+            seVolumeInput.value = Math.round(seVolume * 100);
+            document.getElementById('setting-bgm-volume-value').textContent = `${bgmVolumeInput.value}%`;
+            document.getElementById('setting-se-volume-value').textContent = `${seVolumeInput.value}%`;
+        }
+        bgmVolumeInput.addEventListener('input', () => {
+            bgmVolume = Number(bgmVolumeInput.value) / 100;
+            sounds.bgm.volume = bgmVolume;
+            document.getElementById('setting-bgm-volume-value').textContent = `${bgmVolumeInput.value}%`;
+            saveAudioSettings();
+        });
+        seVolumeInput.addEventListener('input', () => {
+            seVolume = Number(seVolumeInput.value) / 100;
+            applySEVolume();
+            document.getElementById('setting-se-volume-value').textContent = `${seVolumeInput.value}%`;
+            saveAudioSettings();
+        });
+        const howtoModal = document.getElementById('howto-modal');
+        const closeHowto = () => howtoModal.classList.add('hidden');
+        document.getElementById('open-howto-btn').onclick = () => { playSE('button'); howtoModal.classList.remove('hidden'); };
+        document.getElementById('close-howto-btn').onclick = closeHowto;
+        document.getElementById('howto-ok-btn').onclick = closeHowto;
         document.getElementById('open-settings-btn').onclick = () => {
             playSE('button');
             syncSettingsToUI();
@@ -591,6 +655,7 @@
         };
 
         function syncSettingsToUI() {
+            syncAudioSettingsToUI();
             document.getElementById('setting-allow-overlap').checked = gameConfig.allowOverlap;
             document.getElementById('setting-initial-speed').value = gameConfig.initialSpeedMultiplier;
             document.getElementById('setting-speed-mult').value = gameConfig.speedMultiplier;
@@ -1165,7 +1230,7 @@
                         board.unshift(Array(BOARD_WIDTH).fill(0));
                     }
                     clearedLinesTotal += fullRows.length;
-                    clearedLinesScoreTotal += fullRows.length * 200;
+                    clearedLinesScoreTotal += fullRows.length * 500;
                     finalizeLockSequence();
                 });
             } else {
